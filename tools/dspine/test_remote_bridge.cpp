@@ -324,6 +324,27 @@ int main(int argc, char ** argv) {
         const int n_nodes = ggml_graph_n_nodes(graph);
         ggml_tensor ** nodes = ggml_graph_nodes(graph);
         require(n_nodes > 0 && nodes != nullptr, "Empty DSpine compute graph");
+
+        // GGML RPC's supports_op() currently returns true for every node.
+        // That can dispatch an unsupported dtype to the CUDA worker, where a
+        // GGML_ASSERT aborts the process and closes the TCP connection.
+        // Catch known CUDA type constraints locally BEFORE uploading weights
+        // or sending GRAPH_COMPUTE. In particular, CUDA RMSNorm is F32-only.
+        int n_rms_norm = 0;
+        for (int i = 0; i < n_nodes; ++i) {
+            const ggml_tensor * node = nodes[i];
+            if (node->op == GGML_OP_RMS_NORM || node->op == GGML_OP_MEAN ||
+                node->op == GGML_OP_CLAMP) {
+                require(node->src[0] != nullptr &&
+                        node->src[0]->type == GGML_TYPE_F32 &&
+                        node->type == GGML_TYPE_F32,
+                        std::string("CUDA RPC incompatible dtype in ") +
+                        ggml_op_name(node->op) + ": " + ggml_get_name(node));
+                if (node->op == GGML_OP_RMS_NORM) ++n_rms_norm;
+            }
+        }
+        require(n_rms_norm > 0, "DSpine learned bridge lacks a final RMSNorm");
+        std::printf("CUDA GGML graph dtype audit PASS: %d RMSNorm node(s) use F32\n", n_rms_norm);
         for (int i = 0; i < n_nodes; ++i) {
             ggml_backend_sched_set_tensor_backend(sched, nodes[i], backend.get());
         }
