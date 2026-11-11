@@ -187,8 +187,9 @@ top-K proposals, predecessor candidate lattice and greedy transition
 table in one GGML graph. This can be placed on CUDA/RPC once the
 trained five-layer backbone and its table initialization are connected.
 
-Three synthetic CPU C++ tests exercise the bridge, serial refinement,
-and composed proposal tail. They are executed by the GraphTest action.
+Four synthetic CPU C++ tests exercise the bridge, BF16 sender-table
+precomputation (TG/TSV), serial refinement and the composed proposal tail.
+They are executed by the GraphTest action.
 These tests do NOT assert that DSpine is ready for user inference:
 the actual five attention layers, precomputed learned tables, Qwen3.8
 ReplaySSM verification and sampled-temperature correction are pending.

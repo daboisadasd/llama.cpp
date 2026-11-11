@@ -35,7 +35,15 @@ target_include_directories(test-dspine-tail PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../ggml/include")
 target_link_libraries(test-dspine-tail PRIVATE ggml)
 
+add_executable(test-dspine-tables test_native_tables.cpp)
+target_compile_features(test-dspine-tables PRIVATE cxx_std_17)
+target_include_directories(test-dspine-tables PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/models"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ggml/include")
+target_link_libraries(test-dspine-tables PRIVATE ggml)
+
 enable_testing()
+add_test(NAME dspine-native-tables COMMAND test-dspine-tables)
 add_test(NAME dspine-native-bridge COMMAND test-dspine-bridge)
 add_test(NAME dspine-native-refine COMMAND test-dspine-refine)
 add_test(NAME dspine-native-tail COMMAND test-dspine-tail)
