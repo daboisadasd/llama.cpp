@@ -1,0 +1,27 @@
+name: DSpine checkpoint and code-bridge preflight
+on:
+  push:
+    paths:
+      - 'tools/dspine/**'
+      - 'tools/phase1_mtp/inspect_gguf.py'
+      - 'tools/phase1_mtp/test_phase1.py'
+      - '.github/workflows/dspine-preflight.yml'
+  pull_request:
+    paths:
+      - 'tools/dspine/**'
+      - 'tools/phase1_mtp/inspect_gguf.py'
+      - 'tools/phase1_mtp/test_phase1.py'
+      - '.github/workflows/dspine-preflight.yml'
+
+jobs:
+  offline-preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: DSpine checkpoint/header and bridge math tests
+        run: python -m unittest discover -s tools/dspine -p 'test_*.py' -v
+      - name: Existing DFlash and DSpark native seams
+        run: python tools/dspine/source_audit.py --llama-root .
