@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import benchmark as b
+import diagnose_outputs as diag
 from inspect_gguf import GGUFError, inspect
 from profile_report import summarize as summarize_profile
 from spec_log_report import parse_log
@@ -275,6 +276,53 @@ class TestProfile(unittest.TestCase):
             self.assertEqual(kernel["count"], 1)
             self.assertEqual(kernel["cumulative_gpu_ms"], 7.0)
             self.assertEqual(report["tables"]["CUPTI_ACTIVITY_KIND_MEMCPY"][0]["bytes"], 4096)
+
+
+class TestOutputDiagnostics(unittest.TestCase):
+    def test_first_difference(self):
+        self.assertEqual(diag.first_difference([1, 2, 3], [1, 2, 4]), 2)
+        self.assertEqual(diag.first_difference([1, 2], [1, 2, 3]), 2)
+        self.assertIsNone(diag.first_difference([1, 2], [1, 2]))
+
+    def test_compare_differing_ids_and_text(self):
+        a = {"case": "A_ctx4096_depth0", "data": {"tokens": [11,12,13], "content": "Hello world",
+             "timings": {"draft_n": 0, "draft_n_accepted": 0}}}
+        c = {"case": "C_ctx4096_depth3", "data": {"tokens": [11,12,14], "content": "Hello there",
+             "timings": {"draft_n": 10, "draft_n_accepted": 8}}}
+        result = diag.compare(a, c)
+        self.assertFalse(result["match"])
+        self.assertEqual(result["first_differing_token_index_zero_based"], 2)
+        self.assertEqual(result["first_differing_character_index_zero_based"], 6)
+        self.assertEqual(result["candidate_draft_n_accepted"], 8)
+
+    def test_existing_results_reanalysis(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            def write_case(mode, depth, tokens):
+                path = root / f"{mode}_ctx4096_depth{depth}.outputs.json"
+                path.write_text(json.dumps([{"prompt_profile": "short", "max_tokens": 128,
+                    "repeat": 0, "data": {"tokens": tokens, "content": "text",
+                    "timings": {"draft_n": 0}}}]))
+            write_case("A", 0, [1,2,3])
+            write_case("B", 1, [1,2,4])
+            write_case("C", 1, [1,2,4])
+            write_case("B", 3, [1,7,3])
+            write_case("C", 3, [1,7,3])
+            report = diag.diagnose(root)
+            self.assertEqual(report["summary"]["case_files_found"], 5)
+            self.assertEqual(report["summary"]["baseline_comparisons"], 4)
+            self.assertEqual(report["summary"]["baseline_mismatches"], 4)
+            self.assertEqual(report["summary"]["same_depth_B_vs_C_comparisons"], 2)
+            self.assertEqual(report["summary"]["same_depth_B_vs_C_mismatches"], 0)
+
+    def test_missing_baseline_is_flagged(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "C_ctx4096_depth3.outputs.json").write_text(
+                json.dumps([{"prompt_profile": "long", "max_tokens": 128,
+                             "repeat": 0, "data": {"content": "alone"}}]))
+            with self.assertRaisesRegex(ValueError, "No A_"):
+                diag.diagnose(root)
 
 
 if __name__ == "__main__":

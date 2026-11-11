@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Check','Build','Download','Test','Smoke','Full','Profile','Update')]
+    [ValidateSet('Check','Build','Download','Test','Smoke','Full','Profile','Update','Diagnose')]
     [string]$Action,
     [string]$ModelDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B'),
     [string]$PrimaryDevice = 'CUDA0',
@@ -12,7 +12,9 @@ param(
     [string]$ExpectPrimary = '5080',
     [string]$ExpectDraft = '3070 Ti',
     [string]$BuildDir = '',
-    [string]$NvidiaSmi = ''
+    [string]$NvidiaSmi = '',
+    [ValidateSet('on','off','auto')] [string]$FlashAttn = 'on',
+    [string]$ResultsDir = ''
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -122,18 +124,21 @@ function Invoke-Phase1 {
         '--llama-repo', $repoRoot, '--nvidia-smi', $smi,
         '--primary-device', $PrimaryDevice, '--draft-device', $DraftDevice,
         '--expect-primary', $ExpectPrimary, '--expect-draft', $ExpectDraft,
-        '--target-ngl', [string]$TargetNgl
+        '--target-ngl', [string]$TargetNgl,
+        '--flash-attn', $FlashAttn
     )
+    $outputSuffix = ''
+    if ($FlashAttn -ne 'on') { $outputSuffix = '_fa_' + $FlashAttn }
     switch ($Kind) {
         'Smoke' {
             $benchmarkArgs += @('--contexts','4096','--depths','1,3',
                        '--generations','128','--prompt-profiles','short','--repeats','1',
-                       '--output-dir',(Join-Path $toolDir 'results_windows_smoke'))
+                       '--output-dir',(Join-Path $toolDir ('results_windows_smoke' + $outputSuffix)))
         }
         'Full' {
             $benchmarkArgs += @('--contexts','4096,16384','--depths','1,2,3,4',
                        '--generations','128,512','--prompt-profiles','short,long',
-                       '--repeats','3','--output-dir',(Join-Path $toolDir 'results_windows_full'))
+                       '--repeats','3','--output-dir',(Join-Path $toolDir ('results_windows_full' + $outputSuffix)))
         }
         'Profile' {
             Require-Command 'nsys'
@@ -184,6 +189,17 @@ switch ($Action) {
         )
     }
     'Smoke' { Invoke-Phase1 -Kind 'Smoke' }
+    'Diagnose' {
+        Require-Command 'py'
+        if ([string]::IsNullOrWhiteSpace($ResultsDir)) {
+            $suffix = ''
+            if ($FlashAttn -ne 'on') { $suffix = '_fa_' + $FlashAttn }
+            $ResultsDir = Join-Path $toolDir ('results_windows_smoke' + $suffix)
+        }
+        Invoke-Checked -Executable 'py' -Arguments @(
+            '-3',(Join-Path $toolDir 'diagnose_outputs.py'),'--results-dir',$ResultsDir
+        )
+    }
     'Full' { Invoke-Phase1 -Kind 'Full' }
     'Profile' { Invoke-Phase1 -Kind 'Profile' }
     'Update' {
