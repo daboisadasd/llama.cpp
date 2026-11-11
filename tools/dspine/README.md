@@ -217,6 +217,42 @@ tail and remote GGML operations. If this test fails on an unsupported
 GGML op or insufficient GPU VRAM, do not assume DSpine inference works;
 preserve the printed error and worker log.
 
+## Recovery after interrupted Windows DSpine tests (November 11)
+
+An earlier version of tools/dspine/windows.ps1 had a corrupted, duplicated
+switch block. It would not even parse, regardless of which -Action was passed.
+That file has been reconstructed. GitHub Actions now checks it with the
+PowerShell language parser on Windows.
+
+A previous CPU GraphTest additionally placed backend allocation inside a
+C++ assert; MSVC Release optimized out the call, causing
+"GGML_ASSERT(buf != NULL && tensor buffer not set)". The test now allocates
+and executes explicitly (regardless of NDEBUG) and uses explicit floating
+point casts at BF16 boundaries. Windows/CI execution is still required to
+prove the full four-case graph suite passes.
+
+The old multi-GB GGUF Convert was also interrupted. The converter writes
+to an isolated "<GGUF>.partial" file and atomically renames only on
+success. If it was stopped by Ctrl+C, use the dedicated restart flag:
+
+~~~powershell
+cd C:\src\llama.cpp
+git pull --ff-only origin master
+.\tools\dspine\windows.ps1 -Action Test
+.\tools\dspine\windows.ps1 -Action GraphTest
+.\tools\dspine\windows.ps1 -Action Convert -RestartPartial
+~~~
+
+The final command removes ONLY the expected GGUF partial, if one exists,
+then starts conversion again; it never deletes the safetensors or changes
+the Q4_K_M target. If a finished GGUF already exists, Convert refuses
+to overwrite it. Use -RestartPartial ONLY if it is acceptable to discard
+a previously interrupted conversion output.
+
+Check GraphTest and Convert independently before running RpcBridgeTest.
+None of this yet implements the full five-layer DSpine drafter or
+ReplaySSM-aware target verifier.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config
