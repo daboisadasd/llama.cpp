@@ -12,11 +12,11 @@
 #include <vector>
 
 static void set_floats(ggml_tensor * tensor, const std::vector<float> & data) {
-    assert(ggml_nelements(tensor) == (int64_t)data.size());
+    GGML_ASSERT(ggml_nelements(tensor) == (int64_t)data.size());
     ggml_backend_tensor_set(tensor, data.data(), 0, data.size() * sizeof(float));
 }
 static void set_ints(ggml_tensor * tensor, const std::vector<int32_t> & data) {
-    assert(ggml_nelements(tensor) == (int64_t)data.size());
+    GGML_ASSERT(ggml_nelements(tensor) == (int64_t)data.size());
     ggml_backend_tensor_set(tensor, data.data(), 0, data.size() * sizeof(int32_t));
 }
 static ggml_tensor * x1(ggml_context * ctx, enum ggml_type type, int64_t n) {
@@ -37,7 +37,7 @@ int main() {
     params.mem_size = 32 * 1024 * 1024;
     params.no_alloc = true;
     ggml_context * ctx = ggml_init(params);
-    assert(ctx);
+    GGML_ASSERT(ctx);
     constexpr int64_t H = 4, C = 4, R = 2, V = 8, T = 3, N = 2 * T;
 
     llama_dspine::bridge_inputs in;
@@ -58,11 +58,11 @@ int main() {
     weights.next_norm_w = x1(ctx, GGML_TYPE_F32, H);
 
     auto out = llama_dspine::build_bridge(ctx, in, weights, (int)T, 1e-6f);
-    assert(out.raw->ne[0] == H && out.raw->ne[1] == N);
-    assert(out.rms->ne[0] == 1 && out.rms->ne[1] == N);
-    assert(out.packed->ne[0] == 3*R && out.packed->ne[1] == N);
-    assert(out.residual->ne[0] == H && out.residual->ne[1] == N);
-    assert(out.normalized->ne[0] == H && out.normalized->ne[1] == N);
+    GGML_ASSERT(out.raw->ne[0] == H && out.raw->ne[1] == N);
+    GGML_ASSERT(out.rms->ne[0] == 1 && out.rms->ne[1] == N);
+    GGML_ASSERT(out.packed->ne[0] == 3*R && out.packed->ne[1] == N);
+    GGML_ASSERT(out.residual->ne[0] == H && out.residual->ne[1] == N);
+    GGML_ASSERT(out.normalized->ne[0] == H && out.normalized->ne[1] == N);
 
     ggml_set_output(out.residual);
     ggml_set_output(out.normalized);
@@ -71,10 +71,15 @@ int main() {
     ggml_build_forward_expand(graph, out.normalized);
 
     ggml_backend_t backend = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr);
-    assert(backend);
+    GGML_ASSERT(backend);
     ggml_backend_sched_t sched = ggml_backend_sched_new(&backend, nullptr, 1, GGML_DEFAULT_GRAPH_SIZE, false, true);
-    assert(sched);
-    assert(ggml_backend_sched_alloc_graph(sched, graph));
+    GGML_ASSERT(sched);
+    // MSVC Release defines NDEBUG: allocation MUST NOT live inside assert().
+    // The previous version skipped allocation entirely and crashed at tensor_set.
+    if (!ggml_backend_sched_alloc_graph(sched, graph)) {
+        std::fprintf(stderr, "DSpine GGML graph allocation failed\n");
+        return 1;
+    }
 
     const std::vector<float> hidden = {
         1.f,2.f,3.f,4.f,
@@ -103,7 +108,11 @@ int main() {
     zeros(weights.write_w);
     set_floats(weights.next_norm_w, {1.f,1.f,1.f,1.f});
 
-    assert(ggml_backend_sched_graph_compute(sched, graph) == GGML_STATUS_SUCCESS);
+    // Likewise, never hide graph execution in a disabled assert().
+    if (ggml_backend_sched_graph_compute(sched, graph) != GGML_STATUS_SUCCESS) {
+        std::fprintf(stderr, "DSpine GGML graph compute failed\n");
+        return 1;
+    }
     std::vector<float> actual(hidden.size());
     std::vector<float> normalized(hidden.size());
     ggml_backend_tensor_get(out.residual, actual.data(), 0, actual.size()*sizeof(float));
