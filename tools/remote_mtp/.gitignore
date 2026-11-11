@@ -1,0 +1,7 @@
+__pycache__/
+results_*/
+*.nsys-rep
+*.sqlite
+*.csv
+*.log
+*.gguf
