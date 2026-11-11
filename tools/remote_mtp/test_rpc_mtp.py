@@ -170,6 +170,71 @@ class TestPrecisionAndRemoteOnly(unittest.TestCase):
         self.assertEqual(command[command.index("--spec-draft-device") + 1], "RPC0")
 
 
+class TestSidecarPrecision(unittest.TestCase):
+    def test_precision_filenames(self):
+        import prepare_mtp as mtp
+        self.assertEqual(mtp.sidecar_filename("Q4_0"), "mtp-Qwen3.8-27B-Q4_0.gguf")
+        self.assertEqual(mtp.sidecar_filename("BF16"), "mtp-Qwen3.8-27B-BF16.gguf")
+        self.assertEqual(mtp.sidecar_filename("F16"), "mtp-Qwen3.8-27B-F16.gguf")
+        with self.assertRaises(ValueError):
+            mtp.sidecar_filename("FP8")
+
+    def test_bf16_and_f16_tensor_types_checked(self):
+        import prepare_mtp as mtp
+        from test_phase1 import fake_gguf
+        with tempfile.TemporaryDirectory() as td:
+            src = Path(td) / "mtp-bf16.gguf"
+            fake_gguf(src, tensor_type=30)
+            self.assertEqual(mtp.validate_sidecar(src, "BF16")["tensor_type_counts"]["BF16"], 2)
+            with self.assertRaisesRegex(ValueError, "no F16 tensors"):
+                mtp.validate_sidecar(src, "F16")
+            dst = Path(td) / "mtp-f16.gguf"
+            fake_gguf(dst, tensor_type=1)
+            self.assertEqual(mtp.validate_sidecar(dst, "F16")["tensor_type_counts"]["F16"], 2)
+
+    def test_f16_converter_keeps_mtp_tensors(self):
+        import prepare_mtp as mtp
+        from test_phase1 import fake_gguf
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "mtp-bf16.gguf"
+            destination = root / "mtp-f16.gguf"
+            quantizer = root / "llama-quantize.exe"
+            fake_gguf(source, tensor_type=30)
+            quantizer.write_bytes(b"synthetic")
+            def synth_convert(cmd, check):
+                self.assertEqual(cmd[-1], "F16")
+                fake_gguf(Path(cmd[2]), tensor_type=1)
+                return None
+            with patch.object(mtp.subprocess, "run", side_effect=synth_convert), \
+                 patch.object(mtp.shutil, "disk_usage") as usage:
+                usage.return_value.free = 100 * 1024**3
+                mtp.convert_bf16_to_f16(source, destination, quantizer)
+            self.assertTrue(destination.is_file())
+            self.assertEqual(mtp.validate_sidecar(destination, "F16")["mtp_tensor_count"], 1)
+
+    def test_f16_converter_rejects_bf16_output(self):
+        import prepare_mtp as mtp
+        from test_phase1 import fake_gguf
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            source = root / "mtp-bf16.gguf"
+            destination = root / "mtp-f16.gguf"
+            quantizer = root / "llama-quantize.exe"
+            fake_gguf(source, tensor_type=30)
+            quantizer.write_bytes(b"synthetic")
+            def synth_wrong_format(cmd, check):
+                fake_gguf(Path(cmd[2]), tensor_type=30)
+            with patch.object(mtp.subprocess, "run", side_effect=synth_wrong_format), \
+                 patch.object(mtp.shutil, "disk_usage") as usage:
+                usage.return_value.free = 100 * 1024**3
+                with self.assertRaisesRegex(ValueError, "no F16 tensors"):
+                    mtp.convert_bf16_to_f16(source, destination, quantizer)
+            self.assertFalse(destination.exists())
+
+
 class TestRemoteResults(unittest.TestCase):
     def test_remote_matches_local(self):
         make = lambda mode, hash: {

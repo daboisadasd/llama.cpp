@@ -123,6 +123,81 @@ For your eventual RTX 5070 Ti target host, substitute
 -ExpectPrimary '5070 Ti' if needed. GPU names and CUDA indexes must
 be checked on the actual host.
 
+## 3. Change MTP head precision (RTX 3080 Ti FP16/BF16 unlock)
+
+The 27B target stays at Q4_K_M on the host. Only the native MTP
+sidecar changes. The upstream ggml-org/Qwen3.8-27B-GGUF repository
+publishes Q4_0 (1.68 GB), Q8_0 (3.16 GB), and BF16 (5.95 GB) sidecars.
+The official repo does NOT publish a standalone F16 sidecar. F16 can
+be converted locally from the official BF16 GGUF using llama-quantize
+(BF16 -> F16); this changes the **tensor storage format and CUDA
+kernel choices**, not the underlying BF16 source precision. Converting
+from Q4_0 to F16 would NOT restore precision and is deliberately avoided.
+
+On Windows, pull the latest fork and download the BF16 MTP sidecar once:
+
+~~~powershell
+cd C:\src\llama.cpp
+git pull --ff-only origin master
+.\tools\remote_mtp\windows.ps1 -Action Test
+.\tools\remote_mtp\windows.ps1 -Action PrepareMtp -MtpPrecision BF16
+~~~
+
+This downloads approximately 5.95 GB to the **Windows host** model
+folder. The Linux RPC worker needs NO GGUF download: the host will
+upload MTP weights to RPC0 at server initialization.
+
+The RTX 3080 Ti worker exposes about 12 GB VRAM. BF16 MTP weights
+plus runtime buffers may fit, but confirm using worker GPU monitoring.
+The Windows RTX 5080 might **not** have enough free VRAM for
+the 5.95 GB local B sidecar alongside the partially offloaded 27B
+target. To avoid distorting the host offload baseline or local OOM,
+test A/R with -RemoteOnly:
+
+~~~powershell
+.\tools\remote_mtp\windows.ps1 -Action Smoke  -Worker 192.168.1.13:50052 -MtpPrecision BF16 -RemoteOnly
+.\tools\remote_mtp\windows.ps1 -Action Repeat -Worker 192.168.1.13:50052 -MtpPrecision BF16 -RemoteOnly
+~~~
+
+Results are separate from previous Q4_0 logs:
+tools/remote_mtp/results_repeat_mtp_bf16_fa_on.
+RemoteOnly runs **A and R**, with no local B/R equivalence
+comparison; that limitation is printed, not silently ignored.
+Use -TargetNgl 35 consistently across all sidecar comparisons.
+
+To try actual F16 tensor storage, **after preparing BF16**, run:
+
+~~~powershell
+.\tools\remote_mtp\windows.ps1 -Action PrepareMtp -MtpPrecision F16
+.\tools\remote_mtp\windows.ps1 -Action Smoke  -Worker 192.168.1.13:50052 -MtpPrecision F16 -RemoteOnly
+.\tools\remote_mtp\windows.ps1 -Action Repeat -Worker 192.168.1.13:50052 -MtpPrecision F16 -RemoteOnly
+~~~
+
+PrepareMtp builds llama-quantize.exe only if it is missing, converts
+the official BF16 MTP GGUF to F16, then validates the resulting GGUF
+tensor types and native MTP tensors. If conversion is unsupported by
+your exact llama.cpp revision or fails validation, it reports the
+error rather than claiming an F16 MTP file exists. You need
+approximately 6 GB additional local storage for the converted output.
+The Linux worker normally does **not** require any new build.
+
+For a matched Q4_0 control with the *new* result naming:
+
+~~~powershell
+.\tools\remote_mtp\windows.ps1 -Action Repeat -Worker 192.168.1.13:50052 -MtpPrecision Q4_0 -RemoteOnly
+~~~
+
+Compare median *useful output tokens/sec*, acceptance rate, GPU VRAM
+and worker CUDA kernels, not only FP16 Tensor Core peak TFLOPS. The
+GA102 FP16/BF16 unlock has been reported to accelerate both formats on
+some RTX 3080 Ti setups; actual MTP speedup is unmeasured.
+
+**Correctness caveat:** A/R exact greedy output may still differ
+because of upstream quantized batched verification behavior. Changing
+MTP head format may also alter accepted draft counts. Check the
+generated output and report mismatches rather than assuming a change
+in output is harmless.
+
 ## 3. Results, correctness, and traces
 
 Outputs appear in tools/remote_mtp/results_smoke_fa_on:
