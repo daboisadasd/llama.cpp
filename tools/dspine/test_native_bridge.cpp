@@ -150,6 +150,30 @@ int main() {
     codebook[C] = 1.f;   // token id 1, first code dimension
     value_w[0] = 1.f;    // value projection: first code -> first rank
     write_w[0] = 2.f;    // learned write: first rank -> first hidden dimension
+    // Each invocation owns a fresh graph allocation. An existing output
+    // may alias transient storage from the previous graph execution; it is
+    // unsafe to assume that unchanged leaf values remain live indefinitely.
+    // Reallocate before the second numerical case, exactly like llama.cpp
+    // does for a newly prepared decoding graph, and initialize every input.
+    ggml_backend_sched_reset(sched);
+    if (!ggml_backend_sched_alloc_graph(sched, graph)) {
+        std::fprintf(stderr, "DSpine GGML second graph allocation failed\n");
+        return 4;
+    }
+    set_floats(in.hidden, hidden);
+    set_ints(in.anchor_token_ids, {1,0,0,2,0,0});
+    set_ints(in.predecessor_ids, {0,0,1,3,3,4});
+    set_floats(in.anchor_mask, {1,0,0,1,0,0});
+    set_floats(in.edge_mask, {0,1,1,0,1,1});
+    set_floats(in.eps, {1e-6f});
+    zeros(weights.codebook);
+    zeros(weights.read_w);
+    zeros(weights.gate_w);
+    zeros(weights.sender_w);
+    zeros(weights.value_w);
+    zeros(weights.gate_bias);
+    zeros(weights.write_w);
+    set_floats(weights.next_norm_w, {1.f,1.f,1.f,1.f});
     set_floats(weights.codebook, codebook);
     set_floats(weights.value_w, value_w);
     set_floats(weights.write_w, write_w);
