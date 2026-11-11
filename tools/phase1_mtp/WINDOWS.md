@@ -108,6 +108,28 @@ If the diagnostic is consistent with batch-shape sensitivity, optionally test Fl
 
 Flash Attention off may change inference speed substantially and does **not** guarantee bitwise batch invariance. Do not compare the throughput to FA-on runs as if nothing else changed. A proper CUDA kernel timeline (Nsight Systems) is still required to prove GPU placement; nvidia-smi utilization alone is insufficient.
 
+## Target-logprob probe for the fourth-token disagreement
+
+Once the saved-output diagnostic confirms B/C match but A differs, run the
+**separate non-performance** probability probe (no CUDA rebuild or new weights):
+
+~~~powershell
+.\tools\phase1_mtp\windows.ps1 -Action Probe
+~~~
+
+This launches A/B/C with the original **raw prompt**, a 12-token warmup, greedy
+generation of 16 tokens, and `n_probs=8` to record per-token top alternatives.
+It reports the fourth token (zero-based index 3) and any new first divergence,
+including its top-two pre-sampling logprob margin. Artifacts go to
+`tools\phase1_mtp\results_windows_greedy_probe_fa_on\greedy_probe.json`,
+with raw responses and server logs alongside.
+
+**Caution:** Enabling probabilities can force a different sampler execution
+path. Confirm that the initial token prefix in Probe matches the earlier
+Smoke, and do not use these runs for throughput comparisons. A small top-two
+margin supports, but does not prove, a numerical near-tie explanation; a large
+margin requires closer verification/KV investigation.
+
 ## 5. Every future code update
 
 In Developer PowerShell, inside C:\src\llama.cpp:

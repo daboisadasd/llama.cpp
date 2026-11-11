@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Check','Build','Download','Test','Smoke','Full','Profile','Update','Diagnose')]
+    [ValidateSet('Check','Build','Download','Test','Smoke','Full','Profile','Update','Diagnose','Probe')]
     [string]$Action,
     [string]$ModelDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B'),
     [string]$PrimaryDevice = 'CUDA0',
@@ -189,6 +189,22 @@ switch ($Action) {
         )
     }
     'Smoke' { Invoke-Phase1 -Kind 'Smoke' }
+    'Probe' {
+        Require-Command 'py'
+        $server = Get-ServerPath
+        $target = Join-Path $ModelDir 'Qwen3.8-27B-Q4_K_M.gguf'
+        $mtp = Join-Path $ModelDir 'mtp-Qwen3.8-27B-Q4_0.gguf'
+        $dir = Join-Path $toolDir ('results_windows_greedy_probe_fa_' + $FlashAttn)
+        Invoke-Checked -Executable 'py' -Arguments @(
+            '-3',(Join-Path $toolDir 'probe_greedy.py'),
+            '--server',$server,'--target',$target,'--mtp',$mtp,
+            '--llama-repo',$repoRoot,
+            '--primary-device',$PrimaryDevice,'--draft-device',$DraftDevice,
+            '--expect-primary',$ExpectPrimary,'--expect-draft',$ExpectDraft,
+            '--target-ngl',[string]$TargetNgl,'--flash-attn',$FlashAttn,
+            '--output-dir',$dir
+        )
+    }
     'Diagnose' {
         Require-Command 'py'
         if ([string]::IsNullOrWhiteSpace($ResultsDir)) {

@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import benchmark as b
 import diagnose_outputs as diag
+import probe_greedy as greedy_probe
 from inspect_gguf import GGUFError, inspect
 from profile_report import summarize as summarize_profile
 from spec_log_report import parse_log
@@ -324,6 +325,35 @@ class TestOutputDiagnostics(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "No A_"):
                 diag.diagnose(root)
 
+
+class TestGreedyLogprobProbe(unittest.TestCase):
+    def test_first_differing_ids(self):
+        self.assertIsNone(greedy_probe.first_differing_token([2, 3], [2, 3]))
+        self.assertEqual(greedy_probe.first_differing_token([2, 3], [2, 4]), 1)
+        self.assertEqual(greedy_probe.first_differing_token([2], [2, 4]), 1)
+        self.assertIsNone(greedy_probe.first_differing_token(None, [2]))
+
+    def test_pre_sampling_top_logprob_gap(self):
+        result = {"tokens": [10, 20, 30, 40], "completion_probabilities": [
+            {}, {}, {}, {"top_logprobs": [
+                {"id": 41, "token": "in", "logprob": -0.6933},
+                {"id": 40, "token": "to", "logprob": -0.6931},
+            ]}
+        ]}
+        row = greedy_probe.snapshot(result, 3)
+        self.assertTrue(row["available"])
+        self.assertEqual(row["selected_id"], 40)
+        self.assertEqual(row["top_logprobs"][0]["id"], 40)
+        self.assertAlmostEqual(row["top2_logprob_gap_nats"], 0.0002)
+
+    def test_probe_pair_comparison(self):
+        mk = lambda x: {"tokens": x, "completion_probabilities": []}
+        out = greedy_probe.describe({"A": mk([1, 2, 3, 4]),
+                                     "B": mk([1, 2, 3, 5]),
+                                     "C": mk([1, 2, 3, 5])})
+        self.assertEqual(len(out), 3)
+        self.assertEqual(out[0]["first_differing_index_zero_based"], 3)
+        self.assertTrue(out[2]["same_token_ids"])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
