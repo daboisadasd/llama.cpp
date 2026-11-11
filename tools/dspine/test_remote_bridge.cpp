@@ -111,10 +111,12 @@ void validate_terminal_disabled(std::ifstream & file, gguf_context * uf,
                                 const std::string & name) {
     const int64_t id = gguf_find_tensor(uf, name.c_str());
     require(id >= 0, "DSpine terminal projection missing: " + name);
-    require(gguf_get_tensor_type(uf, id) == GGML_TYPE_BF16,
+    const ggml_type type = gguf_get_tensor_type(uf, id);
+    require(type == GGML_TYPE_BF16 || type == GGML_TYPE_F32,
             "Unexpected DSpine terminal projection precision");
+    const size_t width = type == GGML_TYPE_BF16 ? 2 : 4;
     const size_t nbytes = gguf_get_tensor_size(uf, id);
-    require(nbytes > 0 && nbytes % 2 == 0, "Invalid terminal projection size");
+    require(nbytes > 0 && nbytes % width == 0, "Invalid terminal projection size");
     const size_t offset = gguf_get_data_offset(uf) + gguf_get_tensor_offset(uf, id);
     file.clear();
     file.seekg((std::streamoff)offset, std::ios::beg);
@@ -123,9 +125,11 @@ void validate_terminal_disabled(std::ifstream & file, gguf_context * uf,
         const size_t n=std::min(buf.size(),nbytes-total);
         file.read(reinterpret_cast<char *>(buf.data()),(std::streamsize)n);
         require(file.gcount()==(std::streamsize)n, "Truncated terminal projection");
-        for (size_t i=0; i<n; i+=2) {
-            const uint16_t bits=(uint16_t)buf[i] | ((uint16_t)buf[i+1] << 8);
-            require((bits & 0x7fff) == 0,
+        for (size_t i=0; i<n; i+=width) {
+            uint32_t bits=0;
+            for (size_t j=0; j<width; j++) bits |= (uint32_t)buf[i+j] << (8*j);
+            const uint32_t magnitude = type == GGML_TYPE_BF16 ? (bits & 0x7fff) : (bits & 0x7fffffff);
+            require(magnitude == 0,
                     "DSpine terminal-disabled checkpoint has nonzero out.weight");
         }
         total+=n;
