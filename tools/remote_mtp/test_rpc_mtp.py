@@ -149,6 +149,27 @@ class TestRepeatedBenchPreset(unittest.TestCase):
         self.assertIsNone(rpc.add_local_remote_ratios(missing)[0]["throughput_ratio_R_to_B"])
 
 
+class TestPrecisionAndRemoteOnly(unittest.TestCase):
+    def test_remote_only_repeat_skips_local_mtp(self):
+        opts = rpc.parse_args([
+            "--action", "repeat", "--server", "llama-server.exe",
+            "--worker", "192.168.1.13:50052",
+            "--target", "target.gguf", "--mtp", "mtp-Qwen3.8-27B-BF16.gguf",
+            "--llama-repo", ".", "--output-dir", "results_bf16", "--remote-only"
+        ])
+        self.assertEqual(opts.modes, ["A", "R"])
+        self.assertEqual(opts.repeats, 5)
+
+    def test_remote_only_uses_selected_bf16_sidecar(self):
+        a = params()
+        a.mtp = Path("mtp-Qwen3.8-27B-BF16.gguf")
+        command = rpc.build_command(a, "R", 4096, 3, 8090)
+        self.assertEqual(command[command.index("--spec-draft-model") + 1],
+                         str(a.mtp))
+        self.assertEqual(command[command.index("--device") + 1], "CUDA0")
+        self.assertEqual(command[command.index("--spec-draft-device") + 1], "RPC0")
+
+
 class TestRemoteResults(unittest.TestCase):
     def test_remote_matches_local(self):
         make = lambda mode, hash: {

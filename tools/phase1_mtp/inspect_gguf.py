@@ -11,6 +11,10 @@ import struct
 _TYPES = {0: 'B', 1: 'b', 2: 'H', 3: 'h', 4: 'I', 5: 'i', 6: 'f',
           7: '?', 10: 'Q', 11: 'q', 12: 'd'}
 
+# GGML tensor type enum IDs (different from GGUF metadata value types).
+# See ggml/include/ggml.h. Unknown types are kept as TYPE_<number>.
+_TENSOR_TYPES = {0: 'F32', 1: 'F16', 2: 'Q4_0', 8: 'Q8_0', 30: 'BF16'}
+
 
 class GGUFError(ValueError):
     pass
@@ -113,6 +117,7 @@ def inspect(path: Path):
                 metadata[key] = value
         names = []
         mtp_names = []
+        tensor_type_counts = {}
         for _ in range(num_tensors):
             name = r.string()
             names.append(name)
@@ -121,7 +126,11 @@ def inspect(path: Path):
             dims = r.unpack('I')
             if dims > 8:
                 raise GGUFError('unreasonable tensor dimension count')
-            r.read(8 * dims + 4 + 8)  # dims + ggml type + offset
+            r.read(8 * dims)  # dimensions
+            tensor_type_id = r.unpack('I')  # GGML type code
+            r.read(8)  # tensor data offset
+            type_name = _TENSOR_TYPES.get(tensor_type_id, f'TYPE_{tensor_type_id}')
+            tensor_type_counts[type_name] = tensor_type_counts.get(type_name, 0) + 1
         return {
             'path': str(path.resolve()),
             'bytes': path.stat().st_size,
@@ -129,6 +138,7 @@ def inspect(path: Path):
             'tensor_count': num_tensors,
             'metadata': metadata,
             'mtp_tensor_count': len(mtp_names),
+            'tensor_type_counts': tensor_type_counts,
             'mtp_tensor_examples': mtp_names[:24],
             'first_tensor_names': names[:12],
         }

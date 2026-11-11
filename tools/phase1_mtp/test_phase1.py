@@ -26,7 +26,7 @@ def _str(value):
     return struct.pack("<Q", len(payload)) + payload
 
 
-def fake_gguf(path, arch="qwen35", with_nextn=True, large_tokenizer_array=False):
+def fake_gguf(path, arch="qwen35", with_nextn=True, large_tokenizer_array=False, tensor_type=0):
     values = [("general.architecture", 8, arch), ("qwen35.block_count", 4, 64)]
     if large_tokenizer_array:
         values.insert(0, ("tokenizer.ggml.tokens", 9, [f"token_{i}" for i in range(300)]))
@@ -44,7 +44,7 @@ def fake_gguf(path, arch="qwen35", with_nextn=True, large_tokenizer_array=False)
             out.write(_str(val) if kind == 8 else struct.pack("<I", val))
     for name in ("token_embd.weight", "blk.64.nextn.eh_proj.weight"):
         out.write(_str(name))
-        out.write(struct.pack("<IQQIQ", 2, 128, 256, 0, 0))
+        out.write(struct.pack("<IQQIQ", 2, 128, 256, tensor_type, 0))
     path.write_bytes(out.getvalue())
 
 
@@ -80,6 +80,14 @@ class TestGGUF(unittest.TestCase):
             path.write_bytes(out.getvalue())
             with self.assertRaises(GGUFError):
                 inspect(path)
+
+    def test_tensor_type_counts_f16_and_bf16(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "sidecar.gguf"
+            fake_gguf(path, tensor_type=30)
+            self.assertEqual(inspect(path)["tensor_type_counts"], {"BF16": 2})
+            fake_gguf(path, tensor_type=1)
+            self.assertEqual(inspect(path)["tensor_type_counts"], {"F16": 2})
 
     def test_truncated(self):
         with tempfile.TemporaryDirectory() as temp:

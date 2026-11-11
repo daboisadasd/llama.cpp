@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Build','Check','Smoke','Repeat','Full','Trace','Test','Update')]
+    [ValidateSet('Build','Check','Smoke','Repeat','Full','Trace','PrepareMtp','Test','Update')]
     [string]$Action,
     [string]$Worker = '',
     [string]$PrimaryDevice = 'CUDA0',
@@ -11,6 +11,8 @@ param(
     [string]$ExpectPrimary = '5080',
     [ValidateRange(0,256)] [int]$TargetNgl = 35,
     [ValidateSet('on','off','auto')] [string]$FlashAttn = 'on',
+    [ValidateSet('Q4_0','Q8_0','BF16','F16')] [string]$MtpPrecision = 'Q4_0',
+    [switch]$RemoteOnly,
     [string]$ModelDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B'),
     [string]$BuildDir = '',
     [string]$CudaArchitectures = '120'
@@ -37,6 +39,16 @@ function Get-Server {
     }
     throw 'Missing Windows llama-server.exe. Run -Action Build first.'
 }
+function Get-Quantizer {
+    $paths = @(
+        (Join-Path $BuildDir 'bin\Release\llama-quantize.exe'),
+        (Join-Path $BuildDir 'bin\llama-quantize.exe')
+    )
+    foreach ($candidate in $paths) {
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    throw 'llama-quantize.exe not found after build'
+}
 function Invoke-RpcTest {
     param([string]$Mode)
     if (-not $Worker) {
@@ -48,7 +60,10 @@ function Invoke-RpcTest {
     if ($PrimaryDevice -eq $RpcDraftDevice) { throw 'Target and drafting devices must differ.' }
     $server = Get-Server
     $target = Join-Path $ModelDir 'Qwen3.8-27B-Q4_K_M.gguf'
-    $mtp = Join-Path $ModelDir 'mtp-Qwen3.8-27B-Q4_0.gguf'
+    $mtp = Join-Path $ModelDir ('mtp-Qwen3.8-27B-' + $MtpPrecision + '.gguf')
+    if ($Mode -ne 'check' -and -not (Test-Path -LiteralPath $mtp -PathType Leaf)) {
+        throw "Missing MTP sidecar $mtp. Run -Action PrepareMtp -MtpPrecision $MtpPrecision first."
+    }
     $cmd = @(
         '-3',(Join-Path $ToolDir 'rpc_benchmark.py'),
         '--action',$Mode,'--server',$server,'--worker',$Worker,
@@ -57,8 +72,9 @@ function Invoke-RpcTest {
         '--target',$target,'--mtp',$mtp,
         '--target-ngl',[string]$TargetNgl,'--flash-attn',$FlashAttn,
         '--llama-repo',$Root,
-        '--output-dir',(Join-Path $ToolDir ('results_' + $Mode + '_fa_' + $FlashAttn))
+        '--output-dir',(Join-Path $ToolDir ('results_' + $Mode + '_mtp_' + $MtpPrecision.ToLowerInvariant() + '_fa_' + $FlashAttn))
     )
+    if ($RemoteOnly) { $cmd += '--remote-only' }
     Invoke-Checked -Executable 'py' -Arguments $cmd
 }
 switch ($Action) {
@@ -74,6 +90,29 @@ switch ($Action) {
             '--build',$BuildDir,'--config','Release','--target','llama-server','--parallel','4'
         )
         Invoke-Checked -Executable (Get-Server) -Arguments @('--list-devices')
+    }
+    'PrepareMtp' {
+        # The target remains Q4_K_M. Only the native MTP drafting GGUF changes.
+        $quantizer = $null
+        if ($MtpPrecision -eq 'F16') {
+            # Conversion from official BF16 may need a quantizer executable.
+            # This compiles only llama-quantize, not llama-server.
+            $quantExists = $true
+            try { $quantizer = Get-Quantizer } catch { $quantExists = $false }
+            if (-not $quantExists) {
+                Invoke-Checked -Executable 'cmake' -Arguments @(
+                    '--build',$BuildDir,'--config','Release',
+                    '--target','llama-quantize','--parallel','4'
+                )
+                $quantizer = Get-Quantizer
+            }
+        }
+        $prepareArgs = @(
+            '-3',(Join-Path $ToolDir 'prepare_mtp.py'),
+            '--precision',$MtpPrecision,'--model-dir',$ModelDir
+        )
+        if ($null -ne $quantizer) { $prepareArgs += @('--quantizer',$quantizer) }
+        Invoke-Checked -Executable 'py' -Arguments $prepareArgs
     }
     'Test' {
         Invoke-Checked -Executable 'py' -Arguments @(

@@ -261,6 +261,8 @@ def run(args):
         "device_preflight": device_info,
         "model_info": model_info,
         "modes": args.modes,
+        "mtp_sidecar": str(args.mtp),
+        "remote_only": args.remote_only,
         "constraints": "Target --device only includes local CUDA; remote RPC device used solely by --spec-draft-device.",
         "known_issue": "A vs B/R exact equality may fail for quantized Qwen with batched target verification; this is reported, not considered correctness proof.",
     }
@@ -314,6 +316,9 @@ def run(args):
           "| A vs B/R mismatches (known unresolved upstream behavior):", len(baseline_mismatches),
           "| B vs R comparable pairs:", b_r_count,
           "| B vs R mismatches:", len(b_r_mismatches))
+    if args.remote_only:
+        print("REMOTE-ONLY: local B intentionally omitted to avoid host VRAM contention. "
+              "No B/R equivalence check is possible in this run.")
     print("RPC trace diagnostics:", args.output_dir / "rpc_trace_summary.json")
     print("Target placement audit:", args.output_dir / "target_placement_audit.json")
     print("Results:", args.output_dir.resolve())
@@ -343,6 +348,8 @@ def parse_args(argv=None):
     p.add_argument("--flash-attn", choices=("on", "off", "auto"), default="on")
     p.add_argument("--nvidia-smi", default=shutil.which("nvidia-smi") or "disabled")
     p.add_argument("--trace-rpc", action="store_true")
+    p.add_argument("--remote-only", action="store_true",
+                   help="run A/R, skipping the local drafting sidecar when the host lacks VRAM")
     args = p.parse_args(argv)
     if args.target_ngl < 0:
         p.error("target-ngl must be >= 0")
@@ -365,6 +372,8 @@ def parse_args(argv=None):
     else:
         args.contexts, args.depths, args.generations = [4096], [1], [16]
         args.prompt_profiles, args.repeats, args.modes = ["short"], 1, ["A", "B", "R"]
+    if args.remote_only and args.action != "trace":
+        args.modes = [mode for mode in args.modes if mode != "B"]
     return args
 
 
