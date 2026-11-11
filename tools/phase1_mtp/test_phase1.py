@@ -4,6 +4,8 @@ import argparse
 import contextlib
 import io
 import json
+import os
+import sys
 from pathlib import Path
 import sqlite3
 import struct
@@ -137,8 +139,8 @@ class TestBench(unittest.TestCase):
             target, mtp = temp / "target.gguf", temp / "mtp.gguf"
             fake_gguf(target)
             fake_gguf(mtp)
-            server = temp / "fake-llama-server"
-            server.write_text(textwrap.dedent("""\
+            script = temp / ("fake-llama-server.py" if os.name == "nt" else "fake-llama-server")
+            script.write_text(textwrap.dedent("""\
                 #!/usr/bin/env python3
                 import json, sys
                 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -172,7 +174,12 @@ class TestBench(unittest.TestCase):
                             'draft_n_accepted':0 if mode=='none' else 3}})
                 HTTPServer(('127.0.0.1',int(get('--port'))),Handler).serve_forever()
             """))
-            server.chmod(0o755)
+            if os.name == "nt":
+                server = temp / "fake-llama-server.cmd"
+                server.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
+            else:
+                server = script
+                server.chmod(0o755)
             args = ["--server", str(server), "--target", str(target), "--mtp", str(mtp),
                     "--contexts", "4096", "--depths", "1", "--repeats", "1",
                     "--generations", "16", "--modes", "A,B,C",

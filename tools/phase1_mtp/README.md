@@ -1,5 +1,7 @@
 # Phase 1: native MTP with a dedicated local GPU in llama.cpp
 
+**Native Windows / no WSL:** [Windows setup, CUDA build, downloads, and tests](WINDOWS.md). WSL2 instructions below are optional.
+
 **Status: ready for hardware validation, not yet performance-validated.** This is the in-repository Phase 1 benchmark/test suite. **No C++ patch has been made**, because the existing MTP code appears to support an independent draft model/device; hardware verification remains required. Inspection of the forked upstream code (2026-11-10) found a path to load the native Qwen MTP sidecar independently on another CUDA GPU using **existing** flags. The local source audit in this package must pass; actual CUDA execution and correctness on the user's devices remain to be established. Phase 2 / DSpine and Phase 3 / RPC intentionally have not begun.
 
 ## Update, rebuild, rerun (after the initial setup)
