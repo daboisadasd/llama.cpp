@@ -114,6 +114,32 @@ This is the first actual native artifact-construction milestone, **not** a
 working DSpine graph, and not a benchmark. Do not expose RPC to untrusted
 networks.
 
+## Native GGML code bridge CPU smoke test
+
+The first backend-agnostic learned code-bridge graph now lives in
+`src/models/dspine-bridge.h`. It constructs code normalization,
+anchor/precedessor selection, learned sigmoid gating, residual writes,
+and next-layer normalization as GGML ops. The C++ numeric unit test
+builds against **CPU GGML only**, checks identity when bridge weights
+are zero, and checks one learned adjacent write without cross-block leakage.
+It does **not** yet execute the real checkpoint, an entire 5-layer
+DSpine drafter, or remote RPC kernels.
+
+On Windows with Visual Studio 2022 Developer PowerShell, from the fork:
+
+```powershell
+git pull --ff-only origin master
+.\tools\dspine\windows.ps1 -Action Test
+.\tools\dspine\windows.ps1 -Action GraphTest
+.\tools\dspine\windows.ps1 -Action SourceAudit
+```
+
+`GraphTest` uses a separate `build-dspine-bridge-win` tree and does
+not change your working `build-win` server. The dedicated
+[GitHub Actions preflight](https://github.com/daboisadasd/llama.cpp/actions/workflows/dspine-preflight.yml)
+also runs this C++ test; it must pass before the code-bridge graph
+can be wired into the model decoder.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config

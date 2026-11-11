@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Check','Prepare','Convert','Test','SourceAudit')]
+    [ValidateSet('Check','Prepare','Convert','Test','GraphTest','SourceAudit')]
     [string]$Action,
     [string]$CheckpointDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B-DSpine-b16'),
     [string]$ModelDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B')
@@ -37,6 +37,16 @@ switch ($Action) {
             '--model-dir',$CheckpointDir,'--target-bf16-gguf',$Bf16Head,
             '--output',$output,'--report',(Join-Path $ReportDir 'conversion_report.json'))
         Write-Host 'DSpine GGUF tensor package created; native runtime is still under development.'
+    }
+    'GraphTest' {
+        $dir = Join-Path $Root 'build-dspine-bridge-win'
+        & cmake -S $Here -B $dir -G 'Visual Studio 17 2022' -A x64 '-DBUILD_SHARED_LIBS=OFF'
+        if ($LASTEXITCODE -ne 0) { throw 'DSpine GGML CPU graph CMake configuration failed' }
+        & cmake --build $dir --config Release --target test-dspine-bridge --parallel 4
+        if ($LASTEXITCODE -ne 0) { throw 'DSpine GGML CPU graph compilation failed' }
+        & ctest --test-dir $dir -C Release --output-on-failure
+        if ($LASTEXITCODE -ne 0) { throw 'DSpine GGML CPU graph numerical test failed' }
+        Write-Host 'Native GGML code bridge CPU graph test passed (not yet full DSpine inference).'
     }
     'SourceAudit' {
         Invoke-Checked -CommandLine @('-3',(Join-Path $Here 'source_audit.py'),'--llama-root',$Root)

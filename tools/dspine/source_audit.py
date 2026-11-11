@@ -24,6 +24,9 @@ def audit(root):
         "target_feature_extraction_for_block_draft": "llama_set_embeddings_layer_inp_dev" in files["verify"],
         "existing_dflash_gguf_converter": '@ModelBase.register("DFlashDraftModel", "DFlash2DraftModel")' in files["convert"],
         "target_qwen35_model_builder": "llama_model_qwen35" in files["target"],
+        "dspine_gguf_converter": (root / "tools/dspine/convert_gguf.py").is_file(),
+        "dspine_bridge_ggml_graph": (root / "src/models/dspine-bridge.h").is_file(),
+        "dspine_bridge_graph_cpu_test": (root / "tools/dspine/test_native_bridge.cpp").is_file(),
     }
     # DSpine is NOT interchangeable with draft-dflash or draft-dspark.
     return {
@@ -31,9 +34,14 @@ def audit(root):
         "existing_primitives": checks,
         "source_audit_pass": all(checks.values()),
         "native_dspine_ready": False,
+        "implemented_but_not_wired": [
+            "Streaming GGUF sidecar preserving all learned weights and BF16 target head",
+            "Standalone backend-agnostic GGML adjacent-code write graph",
+            "CPU graph identity and block-boundary regression test",
+        ],
         "missing_runtime_components": [
-            "GGUF conversion preserving selected_prefix_bridge tensors and DSpine metadata",
-            "GGML/CUDA graph code for learned adjacent-causal writes after each draft layer",
+            "Native llama.cpp DSpine architecture registration and strict GGUF tensor loader",
+            "Connect the GGML adjacent-code graph to each of five DSpine decoder layers",
             "DSpine serial-table candidate refinement with target BF16 output head",
             "ReplaySSM handling for hybrid Qwen3.8 target verification",
             "DSpark dynamic verification and sampled-probability correction",
