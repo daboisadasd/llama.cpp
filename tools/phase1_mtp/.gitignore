@@ -1,0 +1,9 @@
+# Local performance output and model artifacts; never commit traces or weights.
+__pycache__/
+results_*/
+phase1_results/
+*.nsys-rep
+*.sqlite
+*.gguf
+*.csv
+*.log
