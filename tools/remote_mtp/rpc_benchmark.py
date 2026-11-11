@@ -146,6 +146,26 @@ def local_vs_remote(rows):
     return comparisons, mismatches
 
 
+def add_local_remote_ratios(summary):
+    """Annotate every R summary with its measured B throughput ratio, when comparable."""
+    locals_by_config = {
+        (item["context"], item["depth"], item["prompt"], item["max_tokens"]): item
+        for item in summary if item["mode"] == "B"
+    }
+    for item in summary:
+        if item["mode"] != "R":
+            continue
+        key = item["context"], item["depth"], item["prompt"], item["max_tokens"]
+        reference = locals_by_config.get(key)
+        if reference is None:
+            item["throughput_ratio_R_to_B"] = None
+            continue
+        actual = item["median_accepted_output_tokens_per_sec"]
+        local = reference["median_accepted_output_tokens_per_sec"]
+        item["throughput_ratio_R_to_B"] = actual / local if actual is not None and local and local > 0 else None
+    return summary
+
+
 def rpc_trace_summary(logs: list[Path]):
     """RPC debug command counts are for WHOLE loads/runs, not per speculative iteration."""
     counts = Counter()
@@ -269,7 +289,7 @@ def run(args):
         else:
             os.environ["GGML_RPC_DEBUG"] = old_rpc_debug
 
-    summary = bench.summarize(rows)
+    summary = add_local_remote_ratios(bench.summarize(rows))
     bench.save_csv(args.output_dir / "summary.csv", summary)
     (args.output_dir / "summary.json").write_text(json.dumps(summary, indent=2))
     baseline_mismatches = bench.compare_to_baseline(rows)
@@ -281,12 +301,13 @@ def run(args):
     trace_report = rpc_trace_summary(trace_logs)
     (args.output_dir / "rpc_trace_summary.json").write_text(json.dumps(trace_report, indent=2))
     print("\nA: target-only; B: local native MTP; R: native MTP on RPC0")
-    print("mode ctx depth prompt output median_output_tok/s acceptance speedup_vs_A")
+    print("mode ctx depth prompt output trials median_output_tok/s acceptance speedup_vs_A remote/local")
     for row in summary:
         fmt = lambda v: "n/a" if v is None else f"{v:.3f}"
         print(row["mode"], row["context"], row["depth"], row["prompt"], row["max_tokens"],
-              fmt(row["median_accepted_output_tokens_per_sec"]),
-              fmt(row["acceptance_rate"]), fmt(row["speedup_vs_A"]))
+              row["trials"], fmt(row["median_accepted_output_tokens_per_sec"]),
+              fmt(row["acceptance_rate"]), fmt(row["speedup_vs_A"]),
+              fmt(row.get("throughput_ratio_R_to_B")))
     print("CASE FAILURES:", len(failures),
           "| A vs B/R mismatches (known unresolved upstream behavior):", len(baseline_mismatches),
           "| B vs R comparable pairs:", b_r_count,
@@ -306,7 +327,7 @@ def run(args):
 
 def parse_args(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.ArgumentDefaultsHelpFormatter)
-    p.add_argument("--action", choices=("check", "smoke", "full", "trace"), required=True)
+    p.add_argument("--action", choices=("check", "smoke", "repeat", "full", "trace"), required=True)
     p.add_argument("--server", type=Path, required=True)
     p.add_argument("--worker", required=True, help="private LAN endpoint IP:PORT of Linux ggml-rpc-server")
     p.add_argument("--target", type=Path, required=True)
@@ -326,6 +347,12 @@ def parse_args(argv=None):
     if args.action == "smoke":
         args.contexts, args.depths, args.generations = [4096], [1, 3], [128]
         args.prompt_profiles, args.repeats, args.modes = ["short"], 1, ["A", "B", "R"]
+    elif args.action == "repeat":
+        # Five steady-state requests per mode, single context and draft depth.
+        # Server loads happen outside the timed requests. Keep this lightweight
+        # compared to the much larger full matrix.
+        args.contexts, args.depths, args.generations = [4096], [3], [256]
+        args.prompt_profiles, args.repeats, args.modes = ["short"], 5, ["A", "B", "R"]
     elif args.action == "full":
         args.contexts, args.depths, args.generations = [4096, 16384], [1, 2, 3, 4], [128, 512]
         args.prompt_profiles, args.repeats, args.modes = ["short", "long"], 3, ["A", "B", "R"]

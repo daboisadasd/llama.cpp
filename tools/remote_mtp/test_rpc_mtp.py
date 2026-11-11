@@ -106,6 +106,45 @@ class TestRPCDeviceRouting(unittest.TestCase):
                 rpc.preflight(a)
 
 
+class TestRepeatedBenchPreset(unittest.TestCase):
+    def test_repeat_is_five_samples_at_same_depth(self):
+        options = rpc.parse_args([
+            "--action", "repeat",
+            "--server", "llama-server.exe",
+            "--worker", "192.168.1.13:50052",
+            "--target", "target.gguf",
+            "--mtp", "mtp.gguf",
+            "--llama-repo", ".",
+            "--output-dir", "results_repeat",
+        ])
+        self.assertEqual(options.repeats, 5)
+        self.assertEqual(options.contexts, [4096])
+        self.assertEqual(options.depths, [3])
+        self.assertEqual(options.generations, [256])
+        self.assertEqual(options.modes, ["A", "B", "R"])
+
+    def test_remote_local_ratio_uses_medians(self):
+        make = lambda mode, depth, rate: {
+            "mode": mode, "context": 4096, "depth": depth, "prompt": "short",
+            "max_tokens": 256, "median_accepted_output_tokens_per_sec": rate,
+        }
+        cases = [
+            make("A", 0, 6.0),
+            make("B", 3, 15.0),
+            make("R", 3, 14.7),
+        ]
+        report = rpc.add_local_remote_ratios(cases)
+        self.assertAlmostEqual(report[2]["throughput_ratio_R_to_B"], 0.98)
+        self.assertNotIn("throughput_ratio_R_to_B", report[1])
+
+    def test_remote_ratio_missing_local_comparison(self):
+        missing = [{
+            "mode": "R", "context": 4096, "depth": 3, "prompt": "short",
+            "max_tokens": 256, "median_accepted_output_tokens_per_sec": 10.0,
+        }]
+        self.assertIsNone(rpc.add_local_remote_ratios(missing)[0]["throughput_ratio_R_to_B"])
+
+
 class TestRemoteResults(unittest.TestCase):
     def test_remote_matches_local(self):
         make = lambda mode, hash: {

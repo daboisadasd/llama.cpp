@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Build','Check','Smoke','Full','Trace','Test','Update')]
+    [ValidateSet('Build','Check','Smoke','Repeat','Full','Trace','Test','Update')]
     [string]$Action,
     [string]$Worker = '',
     [string]$PrimaryDevice = 'CUDA0',
@@ -82,6 +82,7 @@ switch ($Action) {
     }
     'Check' { Invoke-RpcTest 'check' }
     'Smoke' { Invoke-RpcTest 'smoke' }
+    'Repeat' { Invoke-RpcTest 'repeat' }
     'Full' { Invoke-RpcTest 'full' }
     'Trace' { Invoke-RpcTest 'trace' }
     'Update' {

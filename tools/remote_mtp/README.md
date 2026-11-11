@@ -174,7 +174,41 @@ For longer/repeated A/B/R benchmarks:
 This runs several draft depths, contexts, lengths and repetitions. It
 is deliberately more extensive than the initial smoke run.
 
-## 4. Updating both machines
+## 4. Lightweight repeatability benchmark
+
+The first A/B/R smoke used only one generation per mode. It found roughly
+10.392 vs 10.253 output tokens/s at depth 1 and 14.533 vs 14.376 tokens/s
+at depth 3 (local vs remote). These near-equal measurements are **not**
+proof of negligible network latency: the large, partly CPU-offloaded target
+can mask drafting and RPC delays.
+
+Before running the much larger Full matrix, use this targeted repeated
+comparison with the same target GPU layers and model quantization:
+
+~~~powershell
+cd C:\src\llama.cpp
+git pull --ff-only origin master
+.\tools\remote_mtp\windows.ps1 -Action Test
+.\tools\remote_mtp\windows.ps1 -Action Repeat -Worker 192.168.1.13:50052
+~~~
+
+Repeat runs 5 requests at 4096 context and depth 3 for A, B and R with
+256-token budgets. It saves fresh results to
+tools/remote_mtp/results_repeat_fa_on without overwriting the original
+smoke. Reported throughput is the **median across five requests** for
+each mode, and the R summary includes throughput_ratio_R_to_B. It still
+cannot isolate RPC latency from kernel time; for that inspect Trace and
+GPU profiler results.
+
+For raw RPC command counts and dispatcher timings, run Trace. The
+rpc_trace_summary.json currently counts messages over the entire
+process lifetime; numbers include MTP weight uploads, graph setup and
+generated tokens, so they are not per-token network costs.
+
+The Linux worker is unauthenticated: keep its firewall restricted to the
+Windows host's trusted private IP (currently 192.168.1.15).
+
+## 5. Updating both machines
 
 Windows host:
 
@@ -194,7 +228,7 @@ bash ./tools/remote_mtp/worker_linux.sh serve
 Keep both ends on the same fork revision whenever possible. No ZIP files,
 and no model redownloads are needed for source-only changes.
 
-## 5. What to send back
+## 6. What to send back
 
 First send the Windows -Action Check output and the Linux worker startup
 log. If Smoke completes, share summary.json, failures.json,
