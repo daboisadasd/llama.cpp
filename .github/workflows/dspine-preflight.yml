@@ -34,3 +34,24 @@ jobs:
         run: |
           cmake -S tools/dspine -B build-dspine-rpc -DDSPINE_BRIDGE_RPC=ON -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
           cmake --build build-dspine-rpc --target test-dspine-rpc-bridge --parallel 3
+
+  windows-powershell-syntax:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Parse every DSpine PowerShell entrypoint before running it
+        shell: pwsh
+        run: |
+          $scripts = @(Get-ChildItem -LiteralPath tools/dspine -Filter *.ps1 -File)
+          if ($scripts.Count -eq 0) { throw 'No DSpine PowerShell scripts found' }
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile(
+              $script.FullName, [ref]$tokens, [ref]$parseErrors)
+            if ($parseErrors.Count -ne 0) {
+              $parseErrors | ForEach-Object { Write-Host $_.ToString() }
+              throw "PowerShell parse failed: $($script.FullName)"
+            }
+            Write-Host "PowerShell syntax PASS: $($script.Name)"
+          }
