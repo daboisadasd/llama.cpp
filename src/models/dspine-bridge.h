@@ -142,12 +142,15 @@ static inline bridge_result build_bridge(
 
     // Tencent feature_finish: round residual to BF16, RMSNorm, then next
     // layer's normalization weight, with BF16 output.
-    auto * next = ggml_rms_norm(ctx, updated, norm_eps);
-    // Use F32 for the final product before rounding to BF16 so CPU/CUDA/RPC
-    // backends all have a supported elementwise operation.
+    // CUDA's ggml_cuda_op_rms_norm() accepts F32 input/output only.
+    // The learned residual is BF16 at this point; applying RMSNorm before
+    // casting to F32 fatally asserts inside the Linux CUDA RPC worker and
+    // closes the socket during GRAPH_COMPUTE. Tencent's feature_finish
+    // likewise normalizes the BF16-rounded residual using F32 arithmetic.
+    auto * next = ggml_rms_norm(ctx, ggml_cast(ctx, updated, GGML_TYPE_F32), norm_eps);
+    // Multiply in F32 then round the completed next-layer activation to BF16.
     auto * normalized = round_state(ggml_mul(ctx,
-        ggml_cast(ctx, next, GGML_TYPE_F32),
-        ggml_cast(ctx, w.next_norm_w, GGML_TYPE_F32)));
+        next, ggml_cast(ctx, w.next_norm_w, GGML_TYPE_F32)));
 
     return {raw, rms, packed, updated, normalized};
 }
