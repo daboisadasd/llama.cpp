@@ -3,7 +3,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Check','Prepare','Test','SourceAudit')]
+    [ValidateSet('Check','Prepare','Convert','Test','SourceAudit')]
     [string]$Action,
     [string]$CheckpointDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B-DSpine-b16'),
     [string]$ModelDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B')
@@ -25,6 +25,18 @@ function Invoke-Checked {
 switch ($Action) {
     'Test' {
         Invoke-Checked -CommandLine @('-3','-m','unittest','discover','-s',$Here,'-p','test_*.py','-v')
+    }
+    'Convert' {
+        # Experimental tensor-package only; runtime llama.cpp cannot load general.architecture=dspine yet.
+        New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null
+        $output = Join-Path $CheckpointDir 'Qwen3.8-27B-DSpine-b16.gguf'
+        if (-not (Test-Path -LiteralPath $Bf16Head -PathType Leaf)) {
+            throw "Missing BF16 target output head: $Bf16Head. PrepareMtp BF16 via tools/remote_mtp/windows.ps1 first."
+        }
+        Invoke-Checked -CommandLine @('-3',(Join-Path $Here 'convert_gguf.py'),
+            '--model-dir',$CheckpointDir,'--target-bf16-gguf',$Bf16Head,
+            '--output',$output,'--report',(Join-Path $ReportDir 'conversion_report.json'))
+        Write-Host 'DSpine GGUF tensor package created; native runtime is still under development.'
     }
     'SourceAudit' {
         Invoke-Checked -CommandLine @('-3',(Join-Path $Here 'source_audit.py'),'--llama-root',$Root)

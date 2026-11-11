@@ -33,16 +33,9 @@ def read_gguf_data(path):
         assert reader.raw(4) == b"GGUF"
         assert reader.uint("I") == 3
         nt, nkv = reader.uint("Q"), reader.uint("Q")
-        meta = {}
         for _ in range(nkv):
-            name = reader.string()
+            reader.string()
             typ = reader.uint("I")
-            start = f.tell()
-            reader.skip_value(typ)
-            f.seek(start)
-            meta[name] = (typ, f.read(reader.file.tell() - start))
-            # seek back where skip_value ended -- raw metadata entries are scanned below
-            f.seek(start)
             reader.skip_value(typ)
         tensors = []
         for _ in range(nt):

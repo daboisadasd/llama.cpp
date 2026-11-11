@@ -77,6 +77,43 @@ safetensors download is **needed once**, not on every build or update.
 The command does not launch or benchmark DSpine. It exits rather than
 falling back to a different speculative backend.
 
+## New: stream the full DSpine checkpoint to GGUF (experimental, not runnable)
+
+The source checkpoint remains in safetensors. The fork now includes a
+**streaming, dependency-free GGUF writer** that preserves the original tensor
+names, shapes, dtypes, learned bridge, and version sentinels. It also embeds
+the BF16 target output projection from the MTP BF16 GGUF already on your
+Windows host, and carries over tokenizer metadata. The 27B target GGUF is not
+modified. The output intentionally declares `general.architecture=dspine`,
+which the current llama.cpp runtime does not implement; it must not be run
+with `--spec-type draft-dflash` or `draft-dspark`.
+
+After your existing `Prepare` step (which you already completed):
+
+```powershell
+cd C:\\src\\llama.cpp
+git pull --ff-only origin master
+.\\tools\\dspine\\windows.ps1 -Action Test
+.\\tools\\dspine\\windows.ps1 -Action Convert
+```
+
+`Convert` reads from
+`%USERPROFILE%\\models\\Qwen3.8-27B-DSpine-b16\\model.safetensors`
+without loading 4 GB into memory and writes a new GGUF in that folder.
+It requires the previously downloaded
+`%USERPROFILE%\\models\\Qwen3.8-27B\\mtp-Qwen3.8-27B-BF16.gguf`
+for the BF16 target output head and tokenizer. Expect several GB of new
+storage (original ~4 GB draft plus ~2.54 GB head and metadata).
+It refuses to overwrite an existing or partially converted artifact;
+if an earlier conversion was interrupted, inspect/delete only the
+`.partial` output before retrying. Conversion does **not** need CUDA or
+rebuilding the server. Results metadata is saved in
+`tools\\dspine\\results_preflight\\conversion_report.json`.
+
+This is the first actual native artifact-construction milestone, **not** a
+working DSpine graph, and not a benchmark. Do not expose RPC to untrusted
+networks.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config
