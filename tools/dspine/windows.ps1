@@ -3,9 +3,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory=$true)]
-    [ValidateSet('Check','Prepare','Convert','Test','GraphTest','SourceAudit')]
+    [ValidateSet('Check','Prepare','Convert','Test','GraphTest','RpcBridgeTest','SourceAudit')]
     [string]$Action,
     [string]$CheckpointDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B-DSpine-b16'),
+    [string]$Worker = '',
     [string]$ModelDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B')
 )
 Set-StrictMode -Version Latest
@@ -47,6 +48,48 @@ switch ($Action) {
         & ctest --test-dir $dir -C Release --output-on-failure
         if ($LASTEXITCODE -ne 0) { throw 'DSpine GGML CPU graph numerical test failed' }
         Write-Host 'Native GGML code bridge CPU graph test passed (not yet full DSpine inference).'
+    }
+    'RpcBridgeTest' {
+        if ($Worker -notmatch '^[^:]+:[0-9]+
+        Invoke-Checked -CommandLine @('-3',(Join-Path $Here 'source_audit.py'),'--llama-root',$Root)
+    }
+    'Check' {
+        # Download only the tiny config.json; no 4GB weight download yet.
+        Invoke-Checked -CommandLine @('-3',(Join-Path $Here 'checkpoint.py'),'--model-dir',$CheckpointDir,'--download','--config-only')
+    }
+    'Prepare' {
+        New-Item -ItemType Directory -Path $ReportDir -Force | Out-Null
+        $args = @('-3',(Join-Path $Here 'checkpoint.py'),'--model-dir',$CheckpointDir,
+                  '--download','--output',(Join-Path $ReportDir 'checkpoint_report.json'))
+        if (Test-Path -LiteralPath $Bf16Head -PathType Leaf) {
+            Write-Host "Checking candidate BF16 target projection from: $Bf16Head"
+            $args += @('--bf16-mtp-gguf',$Bf16Head)
+        } else {
+            Write-Warning "BF16 MTP GGUF not available: $Bf16Head. This is optional for checkpoint validation."
+        }
+        Invoke-Checked -CommandLine $args
+        Write-Host 'Checkpoint validated. DSpine llama.cpp execution is NOT yet implemented.'
+    }
+}
+) {
+            throw 'Pass -Worker PRIVATE_IP:PORT, e.g. 192.168.1.13:50052'
+        }
+        $model = Join-Path $CheckpointDir 'Qwen3.8-27B-DSpine-b16.gguf'
+        if (-not (Test-Path -LiteralPath $model -PathType Leaf)) {
+            throw "Converted DSpine GGUF missing: $model. Run -Action Convert first."
+        }
+        $dir = Join-Path $Root 'build-dspine-rpc-win'
+        & cmake -S $Here -B $dir -G 'Visual Studio 17 2022' -A x64 '-DBUILD_SHARED_LIBS=OFF' '-DDSPINE_BRIDGE_RPC=ON'
+        if ($LASTEXITCODE -ne 0) { throw 'DSpine RPC bridge CMake configuration failed' }
+        & cmake --build $dir --config Release --target test-dspine-rpc-bridge --parallel 4
+        if ($LASTEXITCODE -ne 0) { throw 'DSpine RPC bridge compilation failed' }
+        $exe = Join-Path $dir 'Release\test-dspine-rpc-bridge.exe'
+        if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+            throw "DSpine RPC bridge executable missing: $exe"
+        }
+        & $exe $model $Worker
+        if ($LASTEXITCODE -ne 0) { throw 'Real checkpoint DSpine RPC bridge graph failed' }
+        Write-Host 'DSpine BF16 bridge executed on RPC worker (full drafter not yet implemented).'
     }
     'SourceAudit' {
         Invoke-Checked -CommandLine @('-3',(Join-Path $Here 'source_audit.py'),'--llama-root',$Root)

@@ -140,6 +140,38 @@ not change your working `build-win` server. The dedicated
 also runs this C++ test; it must pass before the code-bridge graph
 can be wired into the model decoder.
 
+## Test actual DSpine bridge weights on the Linux RPC GPU
+
+The experimental `test-dspine-rpc-bridge` executable uses the real
+checkpoint-derived GGUF (not synthetic weights). It opens its GGUF header
+without loading the entire checkpoint into host RAM, streams **only the
+learned last-layer bridge weights** to the Linux RPC GPU, and builds the
+same GGML bridge graph as the CPU unit test. It sends deterministic
+synthetic BF16 hidden rows through native GGML RPC and reads back the
+post-write residuals and RMS values.
+
+After the `Convert` action has successfully produced the GGUF and
+the Linux `ggml-rpc-server` is running at 192.168.1.13:50052:
+
+```powershell
+cd C:\src\llama.cpp
+git pull --ff-only origin master
+.\tools\dspine\windows.ps1 -Action GraphTest
+.\tools\dspine\windows.ps1 -Action RpcBridgeTest -Worker 192.168.1.13:50052
+```
+
+The RPC test compiles in an independent `build-dspine-rpc-win` directory
+with `GGML_RPC=ON`, `GGML_CUDA=OFF`, so it requires neither WSL nor
+rebuilding your working target-model server. The worker does not require
+the GGUF file on its filesystem; weights are uploaded by the host.
+Its model GGUF was intentionally marked as the new, **not yet registered**
+`dspine` architecture. This test runs the final learned code bridge only;
+it does *not* run DSpine's five causal decoder layers, serial 16-way
+refinement, ReplaySSM or target verification.
+
+Only run GGML RPC on your trusted LAN, firewall port 50052 to the
+Windows host (192.168.1.15), and never expose it on the Internet.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config
