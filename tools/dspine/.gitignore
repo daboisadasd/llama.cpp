@@ -1,0 +1,6 @@
+__pycache__/
+results_*/
+*.safetensors
+*.gguf
+*.nsys-rep
+*.sqlite

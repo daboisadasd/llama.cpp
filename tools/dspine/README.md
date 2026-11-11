@@ -1,0 +1,104 @@
+# Native llama.cpp DSpine for Qwen3.8-27B — implementation work
+
+**Status (2026-11-11): checkpoint/configuration preflight and numerical bridge
+reference tests are committed, but this is NOT an executable native DSpine
+backend yet.** Do not launch the checkpoint using `--spec-type draft-dflash`,
+`draft-dspark`, or `draft-mtp`: those algorithms do not implement Tencent's
+DSpine code bridge or serial refinement and could produce misleading output.
+
+## Source material (pinned at inspection)
+
+- [Tencent DSpine, main repository](https://github.com/Tencent/DSpine): tree
+  `321b0fc1388c4cdf03483ab73856975f7c0c0be7` at inspection.
+- [Official Qwen3.8-27B DSpine checkpoint](https://huggingface.co/tencent/Qwen3.8-27B-DSpine-b16):
+  ~4.05 GB BF16 safetensors, ~2.03B parameters. Officially 5-layer,
+  `block_size=16`, sliding window 8192.
+- DSpine implementation: `sglang_dspine/models/dspine.py`,
+  `sglang_dspine/runtime/worker.py`, `sglang_dspine/kernels/dspine.py`,
+  and `sglang_dspine/runtime/replayssm`.
+- Current llama.cpp native DFlash/DSpark primitives:
+  `src/models/dflash.cpp`, `common/speculative.cpp`, `conversion/qwen.py`.
+
+## Why MTP's RPC method cannot directly load this checkpoint
+
+Native MTP uses **one trained NextN head**. Tencent DSpine's draft is
+**five causal attention layers** with **learned adjacent-code writes after
+layers 1–5**. Its output sampler does a serial 16-way candidate refinement
+using a **BF16 target `lm_head` matrix**, even when the target itself runs on
+a different GPU. The upstream SGLang implementation currently requires the
+unquantized row-contiguous BF16 target projection and uses ReplaySSM and
+DSpark verification logic. The original model has additional code bridge
+weights and sentinel tensors not represented by llama.cpp's `draft-dflash`
+checkpoint/graph formats. Simply converting base DFlash layers and
+ignoring the bridge **would be a different algorithm** and is not allowed.
+
+Our previously downloaded `mtp-Qwen3.8-27B-BF16.gguf` contains a candidate
+BF16 `output.weight` tensor (5120 × 248320) that may supply the remote
+refinement tail, avoiding another large target-weight download. The
+preflight validates that tensor's GGUF shape/type, not numerical equality
+with Tencent's unquantized target output head. This still must be established.
+
+A 12 GB 3080 Ti worker may have enough VRAM for draft weights + BF16
+projection + serial tables and KV cache, but **no claim is made until
+measured**. Initial estimates: ~4.05 GB draft weights, ~2.54 GB target
+BF16 output head and ~0.76 GB for BF16 top-k lookup tables, plus KV/compute
+state. Network transfers are separate from total VRAM.
+
+## Run preflight on the Windows host, no WSL and no archive files
+
+The checkpoint is NOT a runnable llama.cpp draft yet. This is the
+preparation and source compatibility gate for the upcoming GGML-native port.
+
+```powershell
+cd C:\src\llama.cpp
+git pull --ff-only origin master
+
+# Run tests of DSpine model contract + reference bridge math
+.\tools\dspine\windows.ps1 -Action Test
+
+# Inspect the existing native DFlash/DSpark code and identify missing pieces
+.\tools\dspine\windows.ps1 -Action SourceAudit
+
+# Download/validate only Tencent's tiny config.json first
+.\tools\dspine\windows.ps1 -Action Check
+
+# When ready, download the official ~4.05 GB safetensors and validate
+.\tools\dspine\windows.ps1 -Action Prepare
+```
+
+The `Prepare` command caches the weights under
+`%USERPROFILE%\models\Qwen3.8-27B-DSpine-b16` and writes
+`tools\dspine\results_preflight\checkpoint_report.json`. It validates
+tensor shapes/dtypes using only the safetensors header (no 4 GB RAM copy),
+including the learned code bridge and the 5 draft layers. It also checks
+the candidate BF16 target lm_head in the MTP sidecar when present. The
+safetensors download is **needed once**, not on every build or update.
+
+The command does not launch or benchmark DSpine. It exits rather than
+falling back to a different speculative backend.
+
+## Native implementation sequence
+
+1. **Checkpoint import/validation** — inspect exact Tencent model/config
+   tensor names and shapes (these scripts, tests). Implement GGUF conversion
+   for the five DFlash-derived layers **and all bridge weights**, retaining
+   checkpoint version and target-layer metadata.
+2. **Bridge graph** — implement learned predecessor causal injection in the
+   GGML draft graph: normalize/read code, fuse `[receiver, sender, value]`,
+   apply the gated previous-row write, and RMSNorm at each layer. Compare
+   intermediate tensors with the upstream DSpine implementation.
+3. **Serial refinement** — load the target BF16 `lm_head` onto the drafting
+   GPU; implement 16-way candidate selection and serial tables/chain,
+   including correct rounding/dtype behavior and target verification.
+4. **ReplaySSM and dynamic verification** — preserve Qwen3.8 GDN state on
+   verification, then add confidence-based DSpark scheduling and sampled-
+   probability correction, not just greedy argmax. Test state integrity.
+5. **RPC integration** — reuse `--rpc` and `--spec-draft-device RPC0` to
+   run draft weights and bridge entirely remotely, with target layers
+   restricted to host CUDA/CPU. Profile worker CUDA kernels and RPC commands.
+6. **A/B/C/D/R comparisons** — compare no spec, MTP local, MTP remote,
+   DSpine local, and DSpine remote using useful tokens/sec, acceptance,
+   output correctness and repeated trials. Record source revisions.
+
+No code above should be represented as passing end-to-end DSpine inference
+until its actual graph and verifier exist and run on the user's hardware.

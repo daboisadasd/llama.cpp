@@ -118,6 +118,7 @@ def inspect(path: Path):
         names = []
         mtp_names = []
         tensor_type_counts = {}
+        selected_tensors = {}
         for _ in range(num_tensors):
             name = r.string()
             names.append(name)
@@ -126,11 +127,13 @@ def inspect(path: Path):
             dims = r.unpack('I')
             if dims > 8:
                 raise GGUFError('unreasonable tensor dimension count')
-            r.read(8 * dims)  # dimensions
+            tensor_dims = [r.unpack('Q') for _ in range(dims)]  # GGUF dimension order
             tensor_type_id = r.unpack('I')  # GGML type code
             r.read(8)  # tensor data offset
             type_name = _TENSOR_TYPES.get(tensor_type_id, f'TYPE_{tensor_type_id}')
             tensor_type_counts[type_name] = tensor_type_counts.get(type_name, 0) + 1
+            if name in ('output.weight', 'token_embd.weight'):
+                selected_tensors[name] = {'shape': tensor_dims, 'ggml_type': type_name}
         return {
             'path': str(path.resolve()),
             'bytes': path.stat().st_size,
@@ -139,6 +142,7 @@ def inspect(path: Path):
             'metadata': metadata,
             'mtp_tensor_count': len(mtp_names),
             'tensor_type_counts': tensor_type_counts,
+            'selected_tensors': selected_tensors,
             'mtp_tensor_examples': mtp_names[:24],
             'first_tensor_names': names[:12],
         }

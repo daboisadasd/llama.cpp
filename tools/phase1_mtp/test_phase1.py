@@ -89,6 +89,14 @@ class TestGGUF(unittest.TestCase):
             fake_gguf(path, tensor_type=1)
             self.assertEqual(inspect(path)["tensor_type_counts"], {"F16": 2})
 
+    def test_selected_output_head_metadata_for_dspine(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "bf16-head.gguf"
+            fake_gguf(path, tensor_type=30)
+            summary = inspect(path)
+            self.assertEqual(summary['selected_tensors']['token_embd.weight']['ggml_type'], 'BF16')
+            self.assertEqual(summary['selected_tensors']['token_embd.weight']['shape'], [128, 256])
+
     def test_truncated(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "truncated.gguf"
