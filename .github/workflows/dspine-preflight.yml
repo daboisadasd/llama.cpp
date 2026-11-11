@@ -25,3 +25,8 @@ jobs:
         run: python -m unittest discover -s tools/dspine -p 'test_*.py' -v
       - name: Existing DFlash and DSpark native seams
         run: python tools/dspine/source_audit.py --llama-root .
+      - name: Native GGML adjacent-code bridge CPU graph
+        run: |
+          cmake -S tools/dspine -B build-dspine-bridge -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
+          cmake --build build-dspine-bridge --target test-dspine-bridge --parallel 3
+          ctest --test-dir build-dspine-bridge --output-on-failure
