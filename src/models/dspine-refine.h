@@ -105,8 +105,11 @@ static inline ggml_tensor * build_serial_table(
         auto * best = ggml_argmax(ctx, score); // [1,K] transition lanes
         table = table ? ggml_concat(ctx, table, best, 1) : best;
     }
-    GGML_ASSERT(table != nullptr && table->ne[0] == 1 && table->ne[1] == steps*k);
-    return ggml_reshape_2d(ctx, ggml_cont(ctx, table), k, steps);
+    // ggml_argmax returns a *vector* of length K, not a [1,K] matrix.
+    // Concatenating those vectors on dim 1 naturally builds [K,steps].
+    // A reshape would hide the real layout and can break the transition walk.
+    GGML_ASSERT(table != nullptr && table->ne[0] == k && table->ne[1] == steps);
+    return ggml_cont(ctx, table);
 }
 
 static inline std::vector<int32_t> serial_chain(
