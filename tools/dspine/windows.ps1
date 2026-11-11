@@ -43,7 +43,7 @@ switch ($Action) {
         $dir = Join-Path $Root 'build-dspine-bridge-win'
         & cmake -S $Here -B $dir -G 'Visual Studio 17 2022' -A x64 '-DBUILD_SHARED_LIBS=OFF'
         if ($LASTEXITCODE -ne 0) { throw 'DSpine GGML CPU graph CMake configuration failed' }
-        & cmake --build $dir --config Release --target test-dspine-bridge --parallel 4
+        & cmake --build $dir --config Release --target test-dspine-bridge test-dspine-refine --parallel 4
         if ($LASTEXITCODE -ne 0) { throw 'DSpine GGML CPU graph compilation failed' }
         & ctest --test-dir $dir -C Release --output-on-failure
         if ($LASTEXITCODE -ne 0) { throw 'DSpine GGML CPU graph numerical test failed' }
