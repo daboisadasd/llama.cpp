@@ -47,9 +47,13 @@ static inline table_result build_serial_tables(
     GGML_ASSERT(value_w->ne[0] == c && value_w->ne[1] == r);
 
     // First emulate torch float multiplication followed by a BF16 cast.
-    auto * norm_bf16 = ggml_cast(ctx, norm_w, GGML_TYPE_BF16);
-    auto * weighted_head = ggml_mul(ctx, target_head, ggml_repeat(ctx, norm_bf16, target_head));
-    weighted_head = ggml_cast(ctx, weighted_head, GGML_TYPE_BF16);
+    // Some CPU backends do not support BF16 pointwise operations. Compute
+    // the float product then round once to BF16, matching Tencent's code.
+    auto * head_f32 = ggml_cast(ctx, target_head, GGML_TYPE_F32);
+    auto * norm_f32 = ggml_cast(ctx, norm_w, GGML_TYPE_F32);
+    auto * weighted_head = ggml_cast(ctx,
+        ggml_mul(ctx, head_f32, ggml_repeat(ctx, norm_f32, head_f32)),
+        GGML_TYPE_BF16);
 
     // The GGML weight layout [R,H] is the transpose of Torch's [H,R].
     auto * write_t = ggml_cont(ctx, ggml_transpose(ctx, write_w));

@@ -143,10 +143,11 @@ static inline bridge_result build_bridge(
     // Tencent feature_finish: round residual to BF16, RMSNorm, then next
     // layer's normalization weight, with BF16 output.
     auto * next = ggml_rms_norm(ctx, updated, norm_eps);
-    // RMSNorm output and checkpoint normalization weights may have different
-    // storage types (BF16/F32). Make the multiplication type explicit.
-    auto * norm_weight = ggml_cast(ctx, w.next_norm_w, next->type);
-    auto * normalized = round_state(ggml_mul(ctx, next, norm_weight));
+    // Use F32 for the final product before rounding to BF16 so CPU/CUDA/RPC
+    // backends all have a supported elementwise operation.
+    auto * normalized = round_state(ggml_mul(ctx,
+        ggml_cast(ctx, next, GGML_TYPE_F32),
+        ggml_cast(ctx, w.next_norm_w, GGML_TYPE_F32)));
 
     return {raw, rms, packed, updated, normalized};
 }

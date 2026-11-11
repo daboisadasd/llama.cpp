@@ -111,6 +111,20 @@ class TestDSpineGGUF(unittest.TestCase):
             for tensor in tensors:
                 self.assertIn(data[tensor.src_offset:tensor.src_offset+tensor.size], (b"a"*24,b"b"*8,b"c"*24))
 
+    def test_keyboard_interrupt_removes_temporary_gguf(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            output = root / "interrupted.gguf"
+            class InterruptedSource:
+                def open(self, mode):
+                    raise KeyboardInterrupt("simulated Ctrl+C")
+            tensor = cv.Tensor("model.bridge", (1,), 0, InterruptedSource(), 0, 4)
+            with self.assertRaises(KeyboardInterrupt):
+                cv.write_gguf(output, tensors=[tensor], metadata=[
+                    cv.scalar_meta("general.architecture", "dspine")])
+            self.assertFalse(output.exists())
+            self.assertFalse((root / "interrupted.gguf.partial").exists())
+
     def test_cannot_relabel_existing_gguf(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

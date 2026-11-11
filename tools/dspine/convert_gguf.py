@@ -267,7 +267,10 @@ def write_gguf(path: Path, *, tensors: list[Tensor], metadata: list[bytes]):
                         remaining -= len(data)
             output.flush()
             os.fsync(output.fileno())
-        except Exception:
+        except (Exception, KeyboardInterrupt):
+            # Ctrl+C during a multi-GB write should remove the partial
+            # output when Python receives the interrupt normally. A killed
+            # child can still leave .partial; -RestartPartial handles it.
             output.close()
             temp.unlink(missing_ok=True)
             raise
