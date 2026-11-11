@@ -12,6 +12,7 @@
 #include "gguf.h"
 #include "dspine-tail.h"
 #include "dspine-tables.h"
+#include "gguf_names.h"
 
 #include <algorithm>
 #include <cmath>
@@ -42,9 +43,12 @@ void require(bool condition, const std::string & message) {
 
 ggml_tensor * require_weight(ggml_context * wctx, gguf_context * gguf, const std::string & name,
                              ggml_type type, const std::vector<int64_t> & dims) {
-    auto * t = ggml_get_tensor(wctx, name.c_str());
-    const int64_t id = gguf_find_tensor(gguf, name.c_str());
-    require(id >= 0 && t != nullptr, "GGUF weight missing: " + name);
+    // The DSpine converter preserves original safetensors names. Official
+    // weights omit "model." on their code-bridge and model.norm tensors.
+    const auto resolved = llama_dspine::resolve_gguf_tensor_name(gguf, name);
+    auto * t = ggml_get_tensor(wctx, resolved.name.c_str());
+    require(t != nullptr, "GGML tensor metadata missing: " + resolved.name);
+    std::printf("weight %s -> %s\n", name.c_str(), resolved.name.c_str());
     require(t->type == type ||
             (type == GGML_TYPE_BF16 && t->type == GGML_TYPE_F32),
             "wrong tensor type for " + name + ": expected BF16 or F32");
@@ -95,8 +99,8 @@ void upload_tensor(std::ifstream & stream, gguf_context * gguf, ggml_tensor * ds
 
 void validate_dspine_sentinel(std::ifstream & file, gguf_context * uf,
                               const std::string & name) {
-    const int64_t id = gguf_find_tensor(uf, name.c_str());
-    require(id >= 0, "DSpine version sentinel missing: " + name);
+    const auto resolved = llama_dspine::resolve_gguf_tensor_name(uf, name);
+    const int64_t id = resolved.index;
     require(gguf_get_tensor_type(uf, id) == GGML_TYPE_I64 &&
             gguf_get_tensor_size(uf, id) == sizeof(int64_t),
             "DSpine version sentinel has unexpected type/size: " + name);
@@ -110,8 +114,8 @@ void validate_dspine_sentinel(std::ifstream & file, gguf_context * uf,
 
 void validate_terminal_disabled(std::ifstream & file, gguf_context * uf,
                                 const std::string & name) {
-    const int64_t id = gguf_find_tensor(uf, name.c_str());
-    require(id >= 0, "DSpine terminal projection missing: " + name);
+    const auto resolved = llama_dspine::resolve_gguf_tensor_name(uf, name);
+    const int64_t id = resolved.index;
     const ggml_type type = gguf_get_tensor_type(uf, id);
     require(type == GGML_TYPE_BF16 || type == GGML_TYPE_F32,
             "Unexpected DSpine terminal projection precision");
