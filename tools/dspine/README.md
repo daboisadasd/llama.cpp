@@ -283,6 +283,34 @@ Only after the real bridge passes, try
 This still tests one bridge and the proposal tail, not end-to-end DSpine
 speculative inference.
 
+## November 11: Fix CUDA RPC worker crash and BF16 lookup-table memory
+
+The first real-weight RPC bridge run uploaded ~523 MiB of DSpine tensors
+and then disconnected while executing its graph. Source inspection found
+a definite CUDA assertion: ggml_cuda_op_rms_norm() only accepts F32,
+but the bridge supplied a BF16 residual. The bridge now converts the
+BF16-rounded residual into F32 **before** RMSNorm and converts the
+finished next-layer activation back to BF16. The RPC runner also checks
+RMSNorm/mean/clamp graph dtypes before upload, so this failure is
+diagnosed locally instead of killing the Linux CUDA server.
+
+For the stronger -Tail mode, the original precomputed BF16 TG/TSV tables
+also materialized multiple whole-vocabulary F32 buffers from the 2.4 GiB
+target output head, potentially exceeding the remote 3080 Ti's 12 GiB.
+Table precomputation now uses 8192-vocabulary-row tiles with a
+balanced column concatenation tree, keeping peak temporary buffers bounded.
+The critical F32-product -> BF16-rounding boundary is preserved.
+This is not yet a measured memory/throughput claim; real GPU profiling
+and comparison with Tencent's reference values remain necessary.
+
+The sixth GraphTest case specifically exercises the BF16 input/output
+bridge path and rejects any non-F32 CUDA RMSNorm input.
+
+When GGML RPC closes a connection following a worker-side assertion,
+restart the Linux worker before rerunning the Windows RPC test. The
+client code alone cannot restart the separate worker process.
+Do not redownload or reconvert the GGUF.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config

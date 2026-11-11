@@ -49,7 +49,17 @@ target_include_directories(test-dspine-gguf-names PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(test-dspine-gguf-names PRIVATE ggml)
 
+// The real RPC draft path carries BF16 inputs; this CPU reference checks
+// CUDA-incompatible RMSNorm input dtypes before a remote graph is submitted.
+add_executable(test-dspine-bridge-bf16 test_native_bridge_bf16.cpp)
+target_compile_features(test-dspine-bridge-bf16 PRIVATE cxx_std_17)
+target_include_directories(test-dspine-bridge-bf16 PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/models"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ggml/include")
+target_link_libraries(test-dspine-bridge-bf16 PRIVATE ggml)
+
 enable_testing()
+add_test(NAME dspine-native-bridge-bf16 COMMAND test-dspine-bridge-bf16)
 add_test(NAME dspine-native-gguf-names COMMAND test-dspine-gguf-names)
 add_test(NAME dspine-native-tables COMMAND test-dspine-tables)
 add_test(NAME dspine-native-bridge COMMAND test-dspine-bridge)
