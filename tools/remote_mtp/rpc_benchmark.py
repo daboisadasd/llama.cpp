@@ -152,13 +152,15 @@ def add_local_remote_ratios(summary):
         (item["context"], item["depth"], item["prompt"], item["max_tokens"]): item
         for item in summary if item["mode"] == "B"
     }
+    # Keep a consistent CSV schema: the original summary writer uses
+    # the first row's keys, which may be a target-only A row.
     for item in summary:
+        item["throughput_ratio_R_to_B"] = None
         if item["mode"] != "R":
             continue
         key = item["context"], item["depth"], item["prompt"], item["max_tokens"]
         reference = locals_by_config.get(key)
         if reference is None:
-            item["throughput_ratio_R_to_B"] = None
             continue
         actual = item["median_accepted_output_tokens_per_sec"]
         local = reference["median_accepted_output_tokens_per_sec"]

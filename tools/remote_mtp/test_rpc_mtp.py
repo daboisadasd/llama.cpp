@@ -135,7 +135,11 @@ class TestRepeatedBenchPreset(unittest.TestCase):
         ]
         report = rpc.add_local_remote_ratios(cases)
         self.assertAlmostEqual(report[2]["throughput_ratio_R_to_B"], 0.98)
-        self.assertNotIn("throughput_ratio_R_to_B", report[1])
+        self.assertIsNone(report[1]["throughput_ratio_R_to_B"])
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "summary.csv"
+            bench.save_csv(out, report)
+            self.assertIn("throughput_ratio_R_to_B", out.read_text())
 
     def test_remote_ratio_missing_local_comparison(self):
         missing = [{
