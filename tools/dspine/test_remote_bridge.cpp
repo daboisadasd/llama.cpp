@@ -284,13 +284,47 @@ int main(int argc, char ** argv) {
             ggml_build_forward_expand(graph, tail.transitions);
         }
 
-        ggml_backend_t raw_backend = backend.get();
-        auto sched = ggml_backend_sched_new(&raw_backend, nullptr, 1, GGML_DEFAULT_GRAPH_SIZE, false, true);
-        require(sched != nullptr, "GGML scheduler init failed");
+        // GGML's scheduler requires a CPU device in the final slot, even if
+        // the entire computation is intended to execute on a remote GPU.
+        // Keep RPC0 first for priority; register CPU only for scheduler
+        // compatibility. Explicit device assignments below prevent fallback
+        // to the Windows CPU from going unnoticed.
+        std::unique_ptr<std::remove_pointer_t<ggml_backend_t>, decltype(&ggml_backend_free)>
+            cpu_backend(ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_CPU, nullptr),
+                        ggml_backend_free);
+        require(cpu_backend != nullptr, "GGML CPU fallback backend init failed");
+        ggml_backend_t backends[] = { backend.get(), cpu_backend.get() };
+        auto sched = ggml_backend_sched_new(backends, nullptr, 2, GGML_DEFAULT_GRAPH_SIZE, false, true);
+        require(sched != nullptr, "GGML RPC+CPU scheduler init failed");
         std::unique_ptr<std::remove_pointer_t<ggml_backend_sched_t>, decltype(&ggml_backend_sched_free)>
             scheduler(sched, ggml_backend_sched_free);
+
+        // Native DSpine-over-RPC requires remote graph execution, not a
+        // silently successful test performed on the local CPU. Force every
+        // leaf/weight and graph node onto RPC0 and audit the assignments after
+        // scheduler allocation. RPC currently reports all ops as supported,
+        // so unsupported worker kernels will fail rather than run elsewhere.
+        for (int i = 0; i < graph->n_leafs; ++i) {
+            ggml_backend_sched_set_tensor_backend(sched, graph->leafs[i], backend.get());
+        }
+        for (int i = 0; i < graph->n_nodes; ++i) {
+            ggml_backend_sched_set_tensor_backend(sched, graph->nodes[i], backend.get());
+        }
         require(ggml_backend_sched_alloc_graph(scheduler.get(), graph),
-                "Failed to allocate RPC graph and weights");
+                "Failed to allocate remote RPC graph and weights");
+
+        for (int i = 0; i < graph->n_nodes; ++i) {
+            const auto * node = graph->nodes[i];
+            require(ggml_backend_sched_get_tensor_backend(sched, graph->nodes[i]) == backend.get(),
+                    std::string("DSpine op silently left RPC0: ") + ggml_get_name(node));
+        }
+        for (int i = 0; i < graph->n_leafs; ++i) {
+            const auto * node = graph->leafs[i];
+            require(ggml_backend_sched_get_tensor_backend(sched, graph->leafs[i]) == backend.get(),
+                    std::string("DSpine weight/input silently left RPC0: ") + ggml_get_name(node));
+        }
+        std::printf("RPC graph placement audited: %d nodes and %d leaves assigned to RPC0 (CPU standby only)\\n",
+                    graph->n_nodes, graph->n_leafs);
 
         std::ifstream file(filename, std::ios::binary);
         require(file.good(), "Cannot open GGUF for weight streaming");
