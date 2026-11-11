@@ -4,7 +4,6 @@ import argparse
 import contextlib
 import io
 import json
-import os
 import sys
 from pathlib import Path
 import sqlite3
@@ -139,8 +138,8 @@ class TestBench(unittest.TestCase):
             target, mtp = temp / "target.gguf", temp / "mtp.gguf"
             fake_gguf(target)
             fake_gguf(mtp)
-            script = temp / ("fake-llama-server.py" if os.name == "nt" else "fake-llama-server")
-            script.write_text(textwrap.dedent("""\
+            server_script = temp / "fake-llama-server.py"
+            server_script.write_text(textwrap.dedent("""\
                 #!/usr/bin/env python3
                 import json, sys
                 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -174,18 +173,22 @@ class TestBench(unittest.TestCase):
                             'draft_n_accepted':0 if mode=='none' else 3}})
                 HTTPServer(('127.0.0.1',int(get('--port'))),Handler).serve_forever()
             """))
-            if os.name == "nt":
-                server = temp / "fake-llama-server.cmd"
-                server.write_text(f'@echo off\r\n"{sys.executable}" "{script}" %*\r\n')
-            else:
-                server = script
-                server.chmod(0o755)
-            args = ["--server", str(server), "--target", str(target), "--mtp", str(mtp),
+            # Launch the mock directly as a Python process on both Windows and POSIX.
+            # A .cmd wrapper would leave a Python child alive when terminated on Windows.
+            real_builder = b.build_command
+            def synthetic_build(a, mode, ctx, depth, port):
+                command = real_builder(a, mode, ctx, depth, port)
+                return [sys.executable, str(server_script)] + command[1:]
+            args = ["--server", sys.executable, "--target", str(target), "--mtp", str(mtp),
                     "--contexts", "4096", "--depths", "1", "--repeats", "1",
                     "--generations", "16", "--modes", "A,B,C",
                     "--output-dir", str(temp / "results"),
                     "--nvidia-smi", str(temp / "no-smi"), "--load-timeout", "20"]
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with (patch.object(b, "build_command", side_effect=synthetic_build),
+                  patch.object(b, "check_devices", return_value={"CUDA0": "GeForce RTX 5080 Laptop GPU",
+                                                                 "CUDA1": "GeForce RTX 3070 Ti"}),
+                  contextlib.redirect_stdout(io.StringIO()),
+                  contextlib.redirect_stderr(io.StringIO())):
                 rc = b.main(args)
             self.assertEqual(rc, 0)
             output = temp / "results"
