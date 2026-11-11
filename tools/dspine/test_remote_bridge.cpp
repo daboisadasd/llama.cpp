@@ -92,6 +92,46 @@ void upload_tensor(std::ifstream & stream, gguf_context * gguf, ggml_tensor * ds
     std::printf("uploaded %-60s %.2f MiB\n", dst->name, (double)nbytes/(1024*1024));
 }
 
+void validate_dspine_sentinel(std::ifstream & file, gguf_context * uf,
+                              const std::string & name) {
+    const int64_t id = gguf_find_tensor(uf, name.c_str());
+    require(id >= 0, "DSpine version sentinel missing: " + name);
+    require(gguf_get_tensor_type(uf, id) == GGML_TYPE_I64 &&
+            gguf_get_tensor_size(uf, id) == sizeof(int64_t),
+            "DSpine version sentinel has unexpected type/size: " + name);
+    const size_t offset = gguf_get_data_offset(uf) + gguf_get_tensor_offset(uf, id);
+    file.clear();
+    file.seekg((std::streamoff)offset, std::ios::beg);
+    int64_t value = 0;
+    file.read(reinterpret_cast<char *>(&value), sizeof(value));
+    require(file.good() && value == 1, "Unsupported DSpine version sentinel: " + name);
+}
+
+void validate_terminal_disabled(std::ifstream & file, gguf_context * uf,
+                                const std::string & name) {
+    const int64_t id = gguf_find_tensor(uf, name.c_str());
+    require(id >= 0, "DSpine terminal projection missing: " + name);
+    require(gguf_get_tensor_type(uf, id) == GGML_TYPE_BF16,
+            "Unexpected DSpine terminal projection precision");
+    const size_t nbytes = gguf_get_tensor_size(uf, id);
+    require(nbytes > 0 && nbytes % 2 == 0, "Invalid terminal projection size");
+    const size_t offset = gguf_get_data_offset(uf) + gguf_get_tensor_offset(uf, id);
+    file.clear();
+    file.seekg((std::streamoff)offset, std::ios::beg);
+    std::vector<unsigned char> buf(1024*1024);
+    for (size_t total=0; total<nbytes;) {
+        const size_t n=std::min(buf.size(),nbytes-total);
+        file.read(reinterpret_cast<char *>(buf.data()),(std::streamsize)n);
+        require(file.gcount()==(std::streamsize)n, "Truncated terminal projection");
+        for (size_t i=0; i<n; i+=2) {
+            const uint16_t bits=(uint16_t)buf[i] | ((uint16_t)buf[i+1] << 8);
+            require((bits & 0x7fff) == 0,
+                    "DSpine terminal-disabled checkpoint has nonzero out.weight");
+        }
+        total+=n;
+    }
+}
+
 template <typename T>
 void put(ggml_tensor * t, const std::vector<T> & v) {
     require(t->buffer != nullptr, "input tensor buffer not allocated");
@@ -214,6 +254,9 @@ int main(int argc, char ** argv) {
 
         std::ifstream file(filename, std::ios::binary);
         require(file.good(), "Cannot open GGUF for weight streaming");
+        validate_dspine_sentinel(file, uf.get(), prefix + "independent_write_version");
+        validate_dspine_sentinel(file, uf.get(), prefix + "terminal_disabled_version");
+        validate_terminal_disabled(file, uf.get(), prefix + "out.weight");
         for (ggml_tensor * weight : {codebook, read_w, gate_w, sender_w, value_w,
                                       bias, write_all, norm}) {
             upload_tensor(file, uf.get(), weight);
