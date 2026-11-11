@@ -7,6 +7,7 @@ param(
     [string]$Action,
     [string]$CheckpointDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B-DSpine-b16'),
     [string]$Worker = '',
+    [switch]$Tail,
     [string]$ModelDir = (Join-Path (Join-Path $env:USERPROFILE 'models') 'Qwen3.8-27B')
 )
 Set-StrictMode -Version Latest
@@ -87,9 +88,15 @@ switch ($Action) {
         if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
             throw "DSpine RPC bridge executable missing: $exe"
         }
-        & $exe $model $Worker
-        if ($LASTEXITCODE -ne 0) { throw 'Real checkpoint DSpine RPC bridge graph failed' }
-        Write-Host 'DSpine BF16 bridge executed on RPC worker (full drafter not yet implemented).'
+        $exeArgs = @($model, $Worker)
+        if ($Tail) { $exeArgs += '--tail' }
+        & $exe @exeArgs
+        if ($LASTEXITCODE -ne 0) { throw 'Real checkpoint DSpine RPC bridge/tail graph failed' }
+        if ($Tail) {
+            Write-Host 'DSpine BF16 bridge, tables, top-K and greedy serial tail executed on RPC worker (full drafter not yet implemented).'
+        } else {
+            Write-Host 'DSpine BF16 bridge executed on RPC worker (full drafter not yet implemented).'
+        }
     }
     'SourceAudit' {
         Invoke-Checked -CommandLine @('-3',(Join-Path $Here 'source_audit.py'),'--llama-root',$Root)

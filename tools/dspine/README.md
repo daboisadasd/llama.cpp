@@ -194,6 +194,29 @@ These tests do NOT assert that DSpine is ready for user inference:
 the actual five attention layers, precomputed learned tables, Qwen3.8
 ReplaySSM verification and sampled-temperature correction are pending.
 
+### Real-weight K=16 serial tail over RPC (experimental)
+
+After the lightweight real-weight RpcBridgeTest passes, run its stronger
+variant. This additional mode uploads the BF16 target output head already
+bundled inside the converted GGUF (approximately 2.54 GB), computes TG
+and TSV lookup tables using the trained bridge weights on RPC0, selects
+top-16 candidates at each position, and computes a 15-token greedy
+serial chain using one GGML graph:
+
+```powershell
+.\tools\dspine\windows.ps1 -Action RpcBridgeTest -Worker 192.168.1.13:50052 -Tail
+```
+
+This can use several additional gigabytes of temporary GPU memory and
+upload time. The production backend will need to persist the TG/TSV
+tables instead of recalculating them for every draft. The input to
+this harness is deliberately synthetic BF16 hidden states: *it does
+not yet exercise the five-layer DSpine backbone or the Qwen3.8 target
+model verifier*. A successful run validates only the learned proposal
+tail and remote GGML operations. If this test fails on an unsupported
+GGML op or insufficient GPU VRAM, do not assume DSpine inference works;
+preserve the printed error and worker log.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config
