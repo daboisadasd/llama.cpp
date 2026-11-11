@@ -18,6 +18,7 @@
 #include "ggml.h"
 #include <algorithm>
 #include <cmath>
+#include <utility>
 #include <vector>
 
 namespace llama_dspine {
