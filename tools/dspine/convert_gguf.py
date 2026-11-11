@@ -232,6 +232,8 @@ def write_gguf(path: Path, *, tensors: list[Tensor], metadata: list[bytes]):
     free = shutil.disk_usage(path.parent).free
     if free < n_bytes + 1024**3:
         raise CheckpointError(f"need {n_bytes + 1024**3} available bytes for GGUF output")
+    print(f"DSpine GGUF: streaming {len(tensors)} tensors, "
+          f"{n_bytes / 1024**3:.2f} GiB of tensor payloads to {path}", flush=True)
     temp = path.with_name(path.name + ".partial")
     if path.exists() or temp.exists():
         raise CheckpointError("output already exists (will not overwrite original GGUF or partial): " + str(path))
@@ -249,7 +251,10 @@ def write_gguf(path: Path, *, tensors: list[Tensor], metadata: list[bytes]):
                 output.write(u64(off))
             output.write(b"\0" * (align_up(output.tell()) - output.tell()))
             base = output.tell()
-            for t, off in zip(tensors, offsets):
+            for i, (t, off) in enumerate(zip(tensors, offsets), 1):
+                if t.size >= 128 * 1024 * 1024 or i == 1 or i == len(tensors):
+                    print(f"  [{i}/{len(tensors)}] {t.name}: {t.size / 1024**2:.1f} MiB",
+                          flush=True)
                 output.write(b"\0" * (base + off - output.tell()))
                 with t.filename.open("rb") as f:
                     f.seek(t.src_offset)
