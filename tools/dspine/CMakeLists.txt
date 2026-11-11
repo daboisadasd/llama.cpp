@@ -21,8 +21,16 @@ target_include_directories(test-dspine-bridge PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../ggml/include")
 target_link_libraries(test-dspine-bridge PRIVATE ggml)
 
+add_executable(test-dspine-refine test_native_refine.cpp)
+target_compile_features(test-dspine-refine PRIVATE cxx_std_17)
+target_include_directories(test-dspine-refine PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../src/models"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ggml/include")
+target_link_libraries(test-dspine-refine PRIVATE ggml)
+
 enable_testing()
 add_test(NAME dspine-native-bridge COMMAND test-dspine-bridge)
+add_test(NAME dspine-native-refine COMMAND test-dspine-refine)
 
 if (DSPINE_BRIDGE_RPC)
     add_executable(test-dspine-rpc-bridge test_remote_bridge.cpp)
