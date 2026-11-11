@@ -10,7 +10,8 @@
 #include "ggml-backend.h"
 #include "ggml-rpc.h"
 #include "gguf.h"
-#include "dspine-bridge.h"
+#include "dspine-tail.h"
+#include "dspine-tables.h"
 
 #include <algorithm>
 #include <cmath>
@@ -146,14 +147,17 @@ void put(ggml_tensor * t, const std::vector<T> & v) {
 } // namespace
 
 int main(int argc, char ** argv) {
-    if (argc != 3) {
+    if (argc != 3 && argc != 4) {
         std::fprintf(stderr,
-            "Usage: test-dspine-rpc-bridge.exe DSpine-b16.gguf WORKER_IP:50052\n"
-            "Only tests the genuine final DSpine code-bridge graph, not DSpine inference.\n");
+            "Usage: test-dspine-rpc-bridge.exe DSpine-b16.gguf WORKER_IP:50052 [--tail]\n"
+            "Default: learned bridge; --tail: bridge, target top-K, TG/TSV and serial chain.\n"
+            "No mode runs the full five-layer drafter or target verification yet.\n");
         return 2;
     }
     try {
         const std::string filename = argv[1], worker = argv[2];
+        const bool tail_mode = argc == 4 && std::string(argv[3]) == "--tail";
+        require(argc == 3 || tail_mode, "Unrecognized optional argument (expected --tail)");
         require(worker.find(':') != std::string::npos, "Expected private worker endpoint host:port");
         ggml_context * wctx_raw = nullptr;
         gguf_init_params args = {};
@@ -189,6 +193,13 @@ int main(int argc, char ** argv) {
                                           GGML_TYPE_BF16, {R,H,5});
         auto * norm = require_weight(wctx.get(), uf.get(), "model.norm.weight",
                                      GGML_TYPE_BF16, {H});
+        ggml_tensor * head = nullptr;
+        if (tail_mode) {
+            head = require_weight(wctx.get(), uf.get(), "output.weight",
+                                  GGML_TYPE_BF16, {H,V});
+            require(head->type == GGML_TYPE_BF16,
+                    "DSpine serial refinement needs BF16, not quantized or F32 output.weight");
+        }
 
         ggml_backend_load_all();
         ggml_backend_reg_t rpc = ggml_backend_rpc_add_server(worker.c_str());
@@ -236,7 +247,24 @@ int main(int argc, char ** argv) {
         // Full config.eps is also carried in GGUF as config_json.
         // The official Qwen3.8 DSpine config uses 1e-6. A future decoder
         // must derive epsilon from the validated config, not assume it.
-        auto output = llama_dspine::build_bridge(ctx, in, w, 16, 1e-6f);
+        llama_dspine::bridge_result output;
+        llama_dspine::tail_result tail;
+        if (tail_mode) {
+            // Pure GGML BF16 table construction + exact-sender top-K tail.
+            // This is a single one-shot graph test; the production runtime
+            // will precompute and cache TG/TSV only once during model load.
+            auto tables = llama_dspine::build_serial_tables(
+                ctx, head, norm, last_write, codebook, sender_w, value_w);
+            llama_dspine::refine_weights rw = {
+                head, norm, tables.tg, tables.tsv, bias
+            };
+            tail = llama_dspine::build_greedy_tail(ctx, in, w, rw, 16, 16, 1e-6f);
+            output = tail.bridge;
+            ggml_set_output(tail.candidate_ids);
+            ggml_set_output(tail.transitions);
+        } else {
+            output = llama_dspine::build_bridge(ctx, in, w, 16, 1e-6f);
+        }
         ggml_set_output(output.residual);
         ggml_set_output(output.normalized);
         ggml_set_output(output.packed);
@@ -247,6 +275,10 @@ int main(int argc, char ** argv) {
         ggml_build_forward_expand(graph, output.normalized);
         ggml_build_forward_expand(graph, output.packed);
         ggml_build_forward_expand(graph, output.rms);
+        if (tail_mode) {
+            ggml_build_forward_expand(graph, tail.candidate_ids);
+            ggml_build_forward_expand(graph, tail.transitions);
+        }
 
         ggml_backend_t raw_backend = backend.get();
         auto sched = ggml_backend_sched_new(&raw_backend, nullptr, 1, GGML_DEFAULT_GRAPH_SIZE, false, true);
@@ -264,6 +296,9 @@ int main(int argc, char ** argv) {
         for (ggml_tensor * weight : {codebook, read_w, gate_w, sender_w, value_w,
                                       bias, write_all, norm}) {
             upload_tensor(file, uf.get(), weight);
+        }
+        if (tail_mode) {
+            upload_tensor(file, uf.get(), head);
         }
 
         std::vector<ggml_bf16_t> hidden((size_t)(H*N));
@@ -302,8 +337,27 @@ int main(int argc, char ** argv) {
         std::printf("DSpine last-layer learned GGML bridge on RPC0: PASS\n");
         std::printf("  first residual element: %.6f; first RMS: %.6f; checksum: %.6f\n",
                     ggml_bf16_to_fp32(residual.front()), rms.front(), checksum);
-        std::puts("  NOTE: this tests real bridge weights and remote GPU graph execution,"
-                  " NOT full DSpine drafting or verification.");
+        if (tail_mode) {
+            const size_t n = (size_t)(16 * (N - 1));
+            std::vector<int32_t> candidates(n), transitions(n);
+            ggml_backend_tensor_get(tail.candidate_ids, candidates.data(),
+                                    0, n * sizeof(int32_t));
+            ggml_backend_tensor_get(tail.transitions, transitions.data(),
+                                    0, n * sizeof(int32_t));
+            for (int32_t token : candidates) {
+                require(token >= 0 && token < V, "DSpine top-K produced out-of-vocabulary candidate");
+            }
+            const auto tokens = llama_dspine::serial_chain(transitions, candidates, 16, 16);
+            require(tokens.size() == 15, "DSpine serial tail returned incorrect token count");
+            std::printf("DSpine trained GGML bridge + 16-way greedy serial tail on RPC0: PASS\n");
+            std::printf("  15 synthetic-input draft token IDs:");
+            for (int32_t token : tokens) std::printf(" %d", token);
+            std::printf("\n");
+            std::puts("  NOTE: synthetic hidden input, not real 5-layer DSpine inference or target verification.");
+        } else {
+            std::puts("  NOTE: this tests real bridge weights and remote GPU graph execution,"
+                      " NOT full DSpine drafting or verification.");
+        }
         return 0;
     } catch (const std::exception & exc) {
         std::fprintf(stderr, "DSpine RPC bridge test FAILED: %s\n", exc.what());
