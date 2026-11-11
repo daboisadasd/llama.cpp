@@ -172,6 +172,27 @@ refinement, ReplaySSM or target verification.
 Only run GGML RPC on your trusted LAN, firewall port 50052 to the
 Windows host (192.168.1.15), and never expose it on the Internet.
 
+## Native K-way serial refinement and composed proposal tail
+
+The fork now includes src/models/dspine-refine.h: stock GGML operations
+compute DSpine's K-by-K exact-sender scores for each proposed position,
+argmax transition lanes, and a tiny host chain walker. The graph accepts
+the trained BF16 target output projection, normalization, precomputed
+TG/TSV lookup tables, last bridge's pre-write state and candidate IDs.
+The transition table stays on the selected GPU/RPC device until one small
+readback; no per-candidate RPC requests are required.
+
+src/models/dspine-tail.h composes the last learned bridge, target-head
+top-K proposals, predecessor candidate lattice and greedy transition
+table in one GGML graph. This can be placed on CUDA/RPC once the
+trained five-layer backbone and its table initialization are connected.
+
+Three synthetic CPU C++ tests exercise the bridge, serial refinement,
+and composed proposal tail. They are executed by the GraphTest action.
+These tests do NOT assert that DSpine is ready for user inference:
+the actual five attention layers, precomputed learned tables, Qwen3.8
+ReplaySSM verification and sampled-temperature correction are pending.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config
