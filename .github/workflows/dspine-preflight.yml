@@ -30,3 +30,7 @@ jobs:
           cmake -S tools/dspine -B build-dspine-bridge -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
           cmake --build build-dspine-bridge --target test-dspine-bridge --parallel 3
           ctest --test-dir build-dspine-bridge --output-on-failure
+      - name: Build real-weight GGML RPC bridge harness (compile only)
+        run: |
+          cmake -S tools/dspine -B build-dspine-rpc -DDSPINE_BRIDGE_RPC=ON -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-dspine-rpc --target test-dspine-rpc-bridge --parallel 3
