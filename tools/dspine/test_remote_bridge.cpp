@@ -323,7 +323,7 @@ int main(int argc, char ** argv) {
             require(ggml_backend_sched_get_tensor_backend(sched, graph->leafs[i]) == backend.get(),
                     std::string("DSpine weight/input silently left RPC0: ") + ggml_get_name(node));
         }
-        std::printf("RPC graph placement audited: %d nodes and %d leaves assigned to RPC0 (CPU standby only)\\n",
+        std::printf("RPC graph placement audited: %d nodes and %d leaves assigned to RPC0 (CPU standby only)\n",
                     graph->n_nodes, graph->n_leafs);
 
         std::ifstream file(filename, std::ios::binary);
