@@ -78,7 +78,7 @@ int main() {
 
     const std::vector<float> hidden = {
         1.f,2.f,3.f,4.f,
-        4.f,1.f,0.f,2.f,
+        1.f,1.f,1.f,1.f,
         2.f,2.f,2.f,2.f,
         1.f,1.f,0.f,0.f,
         5.f,0.f,0.f,0.f,
@@ -130,6 +130,38 @@ int main() {
             }
         }
     }
+    // Second pass: turn on just one sender and one learned write. In block 0,
+    // anchor token 1 supplies code[0]=sqrt(C)=2. With gate=0, sigmoid=0.5,
+    // message(row 1)[0]=1 and delta[0]=2. Because RMS(row 1)=1, hidden
+    // row 1 becomes [3,1,1,1]. Block 1 uses a different anchor token (2)
+    // and must not inherit the previous block's final sender.
+    std::vector<float> codebook((size_t)(C*V), 0.f);
+    std::vector<float> value_w((size_t)(C*R), 0.f);
+    std::vector<float> write_w((size_t)(R*H), 0.f);
+    codebook[C] = 1.f;   // token id 1, first code dimension
+    value_w[0] = 1.f;    // value projection: first code -> first rank
+    write_w[0] = 2.f;    // learned write: first rank -> first hidden dimension
+    set_floats(weights.codebook, codebook);
+    set_floats(weights.value_w, value_w);
+    set_floats(weights.write_w, write_w);
+    if (ggml_backend_sched_graph_compute(sched, graph) != GGML_STATUS_SUCCESS) {
+        std::fprintf(stderr, "DSpine bridge nonzero write: compute failed\n");
+        return 4;
+    }
+    ggml_backend_tensor_get(out.residual, actual.data(), 0, actual.size()*sizeof(float));
+    for (int64_t row = 0; row < N; ++row) {
+        for (int64_t i = 0; i < H; ++i) {
+            const size_t j = (size_t)(row*H+i);
+            const float expected = (row == 1 && i == 0) ? 3.f : hidden[j];
+            if (std::abs(actual[j] - expected) > 1e-3f) {
+                std::fprintf(stderr,
+                             "DSpine learned adjacent write/boundary mismatch row=%lld dim=%lld (%f vs %f)\n",
+                             (long long)row, (long long)i, actual[j], expected);
+                return 5;
+            }
+        }
+    }
+
     ggml_backend_sched_free(sched);
     ggml_backend_free(backend);
     ggml_free(ctx);
