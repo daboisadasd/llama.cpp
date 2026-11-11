@@ -25,7 +25,7 @@ static void assign(ggml_tensor * t,const std::vector<float> & data){
 }
 int main(){
     try{
-        constexpr int64_t H=4,V=8,R=2,C=4;
+        constexpr int64_t H=4,V=8193,R=2,C=4; // cross the 8192-row GPU tile boundary
         ggml_init_params params={};
         params.mem_size=4*1024*1024;params.no_alloc=true;
         auto * ctx=ggml_init(params);
@@ -49,8 +49,10 @@ int main(){
         expect(ggml_backend_sched_alloc_graph(sched,graph),"table allocation failed");
         std::vector<float> h(H*V,0), w(R*H,0), cb(C*V,0), g(C*R,0), v(C*R,0);
         h[H*1+0]=2;h[H*1+1]=3; // target token1
+        h[H*(V-1)+0]=2;h[H*(V-1)+1]=3; // last token lives in tile 2
         w[R*0+0]=1;w[R*1+1]=1;
         cb[C*1+0]=1;cb[C*1+1]=2;
+        cb[C*(V-1)+0]=1;cb[C*(V-1)+1]=2;
         g[C*0+0]=1;g[C*1+1]=1;
         v[C*1+1]=1;
         assign(head,h);assign(norm,{1,1,1,1});assign(write,w);
@@ -68,6 +70,14 @@ int main(){
         for(int i=0;i<4;i++)
             expect(std::fabs(ggml_bf16_to_fp32(tsv[(size_t)(2*R+i)])-expected_tsv[i])<0.01f,
                    "TSV table numerical mismatch");
+        // Both TG and TSV must preserve the same token order when the
+        // vocabulary is split into a full 8192-row tile and a partial tile.
+        for(int i=0;i<2;i++)
+            expect(std::fabs(ggml_bf16_to_fp32(tg[(size_t)(R*(V-1)+i)])-expected_tg[i])<0.01f,
+                   "TG table chunk boundary corrupted token order");
+        for(int i=0;i<4;i++)
+            expect(std::fabs(ggml_bf16_to_fp32(tsv[(size_t)(2*R*(V-1)+i)])-expected_tsv[i])<0.01f,
+                   "TSV table chunk boundary corrupted token order");
         ggml_backend_sched_free(sched);
         ggml_backend_free(backend);
         ggml_free(ctx);
