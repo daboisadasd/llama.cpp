@@ -146,6 +146,9 @@ class GPUProbe:
         return rows
 
     def _poll(self):
+        if self.exe == 'disabled':
+            self.errors.add('nvidia-smi unavailable: GPU telemetry disabled for this run')
+            return
         while not self._stop.is_set():
             now = datetime.now(timezone.utc).isoformat()
             try:

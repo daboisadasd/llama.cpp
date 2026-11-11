@@ -39,8 +39,11 @@ function Get-SmiPath {
         }
         return (Resolve-Path -LiteralPath $NvidiaSmi).Path
     }
-    $command = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
-    if ($command) { return $command.Source }
+    $command = Get-Command nvidia-smi.exe,nvidia-smi -CommandType Application -ErrorAction SilentlyContinue |
+        Select-Object -First 1
+    if ($command -and (Test-Path -LiteralPath $command.Source -PathType Leaf)) {
+        return $command.Source
+    }
     $candidates = @(
         (Join-Path $env:WINDIR 'System32\nvidia-smi.exe'),
         (Join-Path $env:ProgramFiles 'NVIDIA Corporation\NVSMI\nvidia-smi.exe')
@@ -48,7 +51,19 @@ function Get-SmiPath {
     foreach ($candidate in $candidates) {
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
     }
-    throw 'nvidia-smi.exe not found. Update the Windows NVIDIA driver and check GPU detection.'
+    # Newer NVIDIA display drivers may keep nvidia-smi inside the DriverStore
+    # rather than the old System32 or NVSMI paths. This differs by installation.
+    $driverStore = Join-Path $env:WINDIR 'System32\DriverStore\FileRepository'
+    if (Test-Path -LiteralPath $driverStore -PathType Container) {
+        $driverFolders = Get-ChildItem -LiteralPath $driverStore -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match '^(nv|nvidia)' }
+        foreach ($folder in $driverFolders) {
+            $found = Get-ChildItem -LiteralPath $folder.FullName -Filter 'nvidia-smi.exe' -File -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($found) { return $found.FullName }
+        }
+    }
+    throw 'nvidia-smi.exe not found in this PowerShell environment; CUDA may still work. To use telemetry, pass -NvidiaSmi with its full Windows path.'
 }
 function Get-ServerPath {
     $paths = @(
@@ -62,9 +77,13 @@ function Get-ServerPath {
 }
 function Test-Prerequisites {
     foreach ($name in @('git','cmake','py','nvcc')) { Require-Command $name }
-    $smi = Get-SmiPath
     Write-Host 'Windows NVIDIA GPUs:'
-    Invoke-Checked -Executable $smi -Arguments @('-L')
+    try {
+        $smi = Get-SmiPath
+        Invoke-Checked -Executable $smi -Arguments @('-L')
+    } catch {
+        Write-Warning "GPU telemetry unavailable in this shell: $($_.Exception.Message)"
+    }
     Write-Host 'CUDA compiler:'
     Invoke-Checked -Executable 'nvcc' -Arguments @('--version')
     Write-Host 'Python:'
@@ -77,7 +96,13 @@ function Invoke-Phase1 {
     param([ValidateSet('Smoke','Full','Profile')][string]$Kind)
     Require-Command 'py'
     $server = Get-ServerPath
-    $smi = Get-SmiPath
+    $smi = 'disabled'
+    try {
+        $smi = Get-SmiPath
+        Write-Host "GPU telemetry: $smi"
+    } catch {
+        Write-Warning "nvidia-smi not found; continuing inference without GPU utilization telemetry. $($_.Exception.Message)"
+    }
     $target = Join-Path $ModelDir 'Qwen3.8-27B-Q4_K_M.gguf'
     $mtp = Join-Path $ModelDir 'mtp-Qwen3.8-27B-Q4_0.gguf'
     foreach ($path in @($target,$mtp)) {

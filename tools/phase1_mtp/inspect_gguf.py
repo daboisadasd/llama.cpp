@@ -20,6 +20,40 @@ class Reader:
     def __init__(self, f):
         self.f = f
         self.version = None
+        # Save file size so bulk metadata skipping fails safely on truncated headers.
+        here = f.tell()
+        self.file_size = f.seek(0, os.SEEK_END)
+        f.seek(here)
+
+    def skip(self, n):
+        if n < 0 or self.f.tell() + n > self.file_size:
+            raise GGUFError('truncated GGUF metadata while skipping array payload')
+        self.f.seek(n, os.SEEK_CUR)
+
+    def skip_value(self, tag, depth=0):
+        # Avoid allocating hundreds of thousands of tokenizer vocabulary entries.
+        if depth > 4:
+            raise GGUFError('nested metadata arrays too deep')
+        if tag in _TYPES:
+            self.skip(struct.calcsize('<' + _TYPES[tag]))
+        elif tag == 8:
+            self.skip(self.unpack('Q'))
+        elif tag == 9:
+            element_type, count = self.unpack('I'), self.unpack('Q')
+            self.skip_array(element_type, count, depth + 1)
+        else:
+            raise GGUFError(f'unknown GGUF value type {tag}')
+
+    def skip_array(self, element_type, count, depth=0):
+        if count > 1000000:
+            raise GGUFError('unreasonable array length')
+        if element_type in _TYPES:
+            self.skip(struct.calcsize('<' + _TYPES[element_type]) * count)
+        elif element_type in (8, 9):
+            for _ in range(count):
+                self.skip_value(element_type, depth)
+        else:
+            raise GGUFError(f'unknown GGUF array element type {element_type}')
 
     def read(self, n):
         if n < 0 or n > 64 * 1024 * 1024:
@@ -51,15 +85,11 @@ class Reader:
             n = self.unpack('Q')
             if n > 1000000:
                 raise GGUFError('unreasonable array length')
-            if tag2 in _TYPES:
-                fmt = _TYPES[tag2]
-                byte_len = struct.calcsize('<' + fmt) * n
-                # Skip bulk arrays; only materialize small arrays of interest.
-                if n > 256:
-                    self.f.seek(byte_len, os.SEEK_CUR)
-                    return {'count': n, 'value_type': tag2}
             if n > 256:
-                raise GGUFError('large variable-length array in header is unsupported')
+                # GGUF tokenizer metadata commonly contains large STRING arrays.
+                # Skip all element kinds without materializing the vocabulary.
+                self.skip_array(tag2, n, depth + 1)
+                return {'count': n, 'value_type': tag2}
             return [self.value(tag2, depth + 1) for _ in range(n)]
         raise GGUFError(f'unknown GGUF value type {tag}')
 

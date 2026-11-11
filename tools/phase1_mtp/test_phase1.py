@@ -24,15 +24,22 @@ def _str(value):
     return struct.pack("<Q", len(payload)) + payload
 
 
-def fake_gguf(path, arch="qwen35", with_nextn=True):
+def fake_gguf(path, arch="qwen35", with_nextn=True, large_tokenizer_array=False):
     values = [("general.architecture", 8, arch), ("qwen35.block_count", 4, 64)]
+    if large_tokenizer_array:
+        values.insert(0, ("tokenizer.ggml.tokens", 9, [f"token_{i}" for i in range(300)]))
     if with_nextn:
         values.append(("qwen35.nextn_predict_layers", 4, 1))
     out = io.BytesIO()
     out.write(b"GGUF" + struct.pack("<IQQ", 3, 2, len(values)))
     for key, kind, val in values:
         out.write(_str(key) + struct.pack("<I", kind))
-        out.write(_str(val) if kind == 8 else struct.pack("<I", val))
+        if kind == 9:
+            out.write(struct.pack("<IQ", 8, len(val)))  # STRING array metadata
+            for item in val:
+                out.write(_str(item))
+        else:
+            out.write(_str(val) if kind == 8 else struct.pack("<I", val))
     for name in ("token_embd.weight", "blk.64.nextn.eh_proj.weight"):
         out.write(_str(name))
         out.write(struct.pack("<IQQIQ", 2, 128, 256, 0, 0))
@@ -49,6 +56,28 @@ class TestGGUF(unittest.TestCase):
             self.assertEqual(result["metadata"]["qwen35.nextn_predict_layers"], 1)
             self.assertEqual(result["tensor_count"], 2)
             self.assertEqual(result["mtp_tensor_count"], 1)
+
+    def test_large_string_array_skip(self):
+        # Regression: official Qwen GGUF embeds large variable-length tokenizer arrays.
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "vocab.gguf"
+            fake_gguf(path, large_tokenizer_array=True)
+            result = inspect(path)
+            self.assertEqual(result["metadata"]["general.architecture"], "qwen35")
+            self.assertEqual(result["metadata"]["qwen35.nextn_predict_layers"], 1)
+            self.assertEqual(result["tensor_count"], 2)
+
+    def test_truncated_bulk_array_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "truncated_vocab.gguf"
+            out = io.BytesIO()
+            out.write(b"GGUF" + struct.pack("<IQQ", 3, 0, 1))
+            out.write(_str("tokenizer.ggml.tokens") + struct.pack("<I", 9))
+            out.write(struct.pack("<IQ", 8, 300))
+            out.write(_str("only_one_entry"))
+            path.write_bytes(out.getvalue())
+            with self.assertRaises(GGUFError):
+                inspect(path)
 
     def test_truncated(self):
         with tempfile.TemporaryDirectory() as temp:

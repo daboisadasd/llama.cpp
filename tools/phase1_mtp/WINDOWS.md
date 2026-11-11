@@ -97,6 +97,12 @@ In Developer PowerShell, inside C:\src\llama.cpp:
 
 The Update action does **git pull --ff-only origin master** and rebuilds llama-server in the existing build-win configuration; no new ZIP or model download. Re-run Build only if you change CUDA/Visual Studio toolchains.
 
+## NVIDIA telemetry and large tokenizer headers
+
+The Windows PowerShell runner checks the usual NVIDIA locations **and** searches NVIDIA driver folders under Windows DriverStore for nvidia-smi.exe. If another PowerShell window can run nvidia-smi but Developer PowerShell cannot, that can be a PATH/environment difference, not a missing driver. If the executable is not found, the smoke test now continues with GPU telemetry explicitly disabled; CUDA device checks still run against llama-server.exe. For telemetry, pass a full path to nvidia-smi, e.g. by running Get-Command nvidia-smi in a shell where it works, then supply -NvidiaSmi '<absolute-path>'.
+
+The GGUF header inspector now skips large variable-length tokenizer arrays. If the initial model download finished but the old inspector failed with "large variable-length array in header is unsupported", **do not redownload**. After git pull, run the test and Smoke actions again. Changes to Python or PowerShell scripts do not require rebuilding the already-working CUDA server.
+
 ## What to send back
 
 If a step fails, send the last visible error plus the device list from the Build step. If Smoke completes, send summary.json, failures.json, mismatches.json, and relevant server logs from results_windows_smoke. Do **not** upload the 19 GB model weights.
