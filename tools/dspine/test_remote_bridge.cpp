@@ -20,6 +20,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace {
@@ -43,7 +44,9 @@ ggml_tensor * require_weight(ggml_context * wctx, gguf_context * gguf, const std
     auto * t = ggml_get_tensor(wctx, name.c_str());
     const int64_t id = gguf_find_tensor(gguf, name.c_str());
     require(id >= 0 && t != nullptr, "GGUF weight missing: " + name);
-    require(t->type == type, "wrong tensor type for " + name);
+    require(t->type == type ||
+            (type == GGML_TYPE_BF16 && t->type == GGML_TYPE_F32),
+            "wrong tensor type for " + name + ": expected BF16 or F32");
     for (size_t i = 0; i < dims.size(); i++) {
         require(t->ne[i] == dims[i], "wrong shape for " + name);
     }
