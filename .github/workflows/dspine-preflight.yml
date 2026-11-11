@@ -28,7 +28,7 @@ jobs:
       - name: Native GGML adjacent-code bridge CPU graph
         run: |
           cmake -S tools/dspine -B build-dspine-bridge -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF
-          cmake --build build-dspine-bridge --target test-dspine-bridge test-dspine-refine test-dspine-tail test-dspine-tables --parallel 3
+          cmake --build build-dspine-bridge --target test-dspine-bridge test-dspine-refine test-dspine-tail test-dspine-tables test-dspine-gguf-names --parallel 3
           ctest --test-dir build-dspine-bridge --output-on-failure
       - name: Build real-weight GGML RPC bridge harness (compile only)
         run: |

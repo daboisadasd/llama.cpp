@@ -42,7 +42,15 @@ target_include_directories(test-dspine-tables PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/../../ggml/include")
 target_link_libraries(test-dspine-tables PRIVATE ggml)
 
+add_executable(test-dspine-gguf-names test_gguf_names.cpp)
+target_compile_features(test-dspine-gguf-names PRIVATE cxx_std_17)
+target_include_directories(test-dspine-gguf-names PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/../../ggml/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(test-dspine-gguf-names PRIVATE ggml)
+
 enable_testing()
+add_test(NAME dspine-native-gguf-names COMMAND test-dspine-gguf-names)
 add_test(NAME dspine-native-tables COMMAND test-dspine-tables)
 add_test(NAME dspine-native-bridge COMMAND test-dspine-bridge)
 add_test(NAME dspine-native-refine COMMAND test-dspine-refine)

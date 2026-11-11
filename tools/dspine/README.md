@@ -253,6 +253,36 @@ Check GraphTest and Convert independently before running RpcBridgeTest.
 None of this yet implements the full five-layer DSpine drafter or
 ReplaySSM-aware target verifier.
 
+## Real-checkpoint GGUF tensor namespace fix (2026-11-11)
+
+The 6.14 GiB DSpine GGUF conversion completed successfully with 72 tensors.
+The first `RpcBridgeTest` compiled but initially failed to locate
+`model.selected_prefix_bridge.codebook`. The source safetensors keys and
+resulting GGUF tensor names omit the `model.` prefix (as shown by the
+converter's `selected_prefix_bridge.codebook` log line). The graph loader now
+resolves exact, stripped, and prefixed tensor namespaces, rejecting ambiguous
+files. The rule applies consistently to bridge weights, `norm.weight`, and
+checkpoint version/terminal-disabled markers.
+
+A fifth offline C++ test, `dspine-native-gguf-names`, covers the actual
+Tencent naming convention, prefixed checkpoints, missing weights, and
+ambiguous duplicate variants. **The existing 6.6 GB converted GGUF remains
+valid; there is no need to download or convert it again.**
+
+On Windows:
+
+~~~powershell
+cd C:\src\llama.cpp
+git pull --ff-only origin master
+.\tools\dspine\windows.ps1 -Action GraphTest
+.\tools\dspine\windows.ps1 -Action RpcBridgeTest -Worker 192.168.1.13:50052
+~~~
+
+Only after the real bridge passes, try
+`-Action RpcBridgeTest -Worker 192.168.1.13:50052 -Tail`.
+This still tests one bridge and the proposal tail, not end-to-end DSpine
+speculative inference.
+
 ## Native implementation sequence
 
 1. **Checkpoint import/validation** — inspect exact Tencent model/config
