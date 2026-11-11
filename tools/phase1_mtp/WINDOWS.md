@@ -85,6 +85,29 @@ nsys --version
 
 Open the resulting Nsight Systems reports and confirm the intended device executes each draft phase without target-layer allocations. This is optional until basic inference works.
 
+## Diagnosing mismatched greedy output (without rerunning models)
+
+A completed smoke test can return exit code 2 even when every server launched successfully: this is the strict A/B/C **output equality gate**, not necessarily a GPU crash. Keep the existing results and inspect their actual token sequences:
+
+~~~powershell
+git pull --ff-only origin master
+.\tools\phase1_mtp\windows.ps1 -Action Test
+.\tools\phase1_mtp\windows.ps1 -Action Diagnose
+~~~
+
+The Diagnose action reads the existing results_windows_smoke/*.outputs.json files. It compares A vs B/C **and** B vs C at the same depth; prints the first differing token index, adjacent token IDs, and nearby decoded text; and writes results_windows_smoke/output_diagnostics.json. **It does not rerun inference or overwrite the original run.** All four A/B/C differences still count as unresolved correctness evidence until analyzed.
+
+On quantized targets, CUDA backend computations can be *batch-shape dependent*, even at temperature 0. This is a known upstream investigation: https://github.com/ggml-org/llama.cpp/issues/25618 . Greedy output divergence is not by itself proof of wrong draft-model placement or invalid target verification, but is also not safe to dismiss. Identical B/C accepted counts are not an exact output comparison.
+
+If the diagnostic is consistent with batch-shape sensitivity, optionally test Flash Attention off as a controlled comparison. It saves into **separate** results files, so the current smoke data is preserved:
+
+~~~powershell
+.\tools\phase1_mtp\windows.ps1 -Action Smoke -FlashAttn off
+.\tools\phase1_mtp\windows.ps1 -Action Diagnose -FlashAttn off
+~~~
+
+Flash Attention off may change inference speed substantially and does **not** guarantee bitwise batch invariance. Do not compare the throughput to FA-on runs as if nothing else changed. A proper CUDA kernel timeline (Nsight Systems) is still required to prove GPU placement; nvidia-smi utilization alone is insufficient.
+
 ## 5. Every future code update
 
 In Developer PowerShell, inside C:\src\llama.cpp:
