@@ -299,32 +299,47 @@ int main(int argc, char ** argv) {
         std::unique_ptr<std::remove_pointer_t<ggml_backend_sched_t>, decltype(&ggml_backend_sched_free)>
             scheduler(sched, ggml_backend_sched_free);
 
-        // Native DSpine-over-RPC requires remote graph execution, not a
-        // silently successful test performed on the local CPU. Force every
-        // leaf/weight and graph node onto RPC0 and audit the assignments after
-        // scheduler allocation. RPC currently reports all ops as supported,
-        // so unsupported worker kernels will fail rather than run elsewhere.
-        for (int i = 0; i < graph->n_leafs; ++i) {
-            ggml_backend_sched_set_tensor_backend(sched, graph->leafs[i], backend.get());
+        // ggml_cgraph is deliberately opaque in ggml.h. Use the public
+        // ggml_graph_n_nodes()/ggml_graph_nodes() API to route graph ops.
+        // Its leaf list is not public: explicitly enumerate only the leaf
+        // tensors that this graph actually uses. Do NOT route every tensor
+        // in the GGUF metadata context; that would upload unrelated model
+        // layers and needlessly consume the worker's VRAM.
+        std::vector<ggml_tensor *> rpc_inputs = {
+            codebook, read_w, gate_w, sender_w, value_w,
+            bias, write_all, norm,
+            in.hidden, in.anchor_token_ids, in.predecessor_ids,
+            in.anchor_mask, in.edge_mask, in.eps
+        };
+        if (tail_mode) {
+            rpc_inputs.push_back(head);
         }
-        for (int i = 0; i < graph->n_nodes; ++i) {
-            ggml_backend_sched_set_tensor_backend(sched, graph->nodes[i], backend.get());
+        // Native DSpine-over-RPC requires remote execution, not a
+        // silently successful test performed on the local CPU. Explicitly
+        // pin the used weights, inputs and graph ops to RPC0; CPU is
+        // present only because the GGML scheduler API requires it last.
+        for (ggml_tensor * tensor : rpc_inputs) {
+            ggml_backend_sched_set_tensor_backend(sched, tensor, backend.get());
+        }
+        const int n_nodes = ggml_graph_n_nodes(graph);
+        ggml_tensor ** nodes = ggml_graph_nodes(graph);
+        require(n_nodes > 0 && nodes != nullptr, "Empty DSpine compute graph");
+        for (int i = 0; i < n_nodes; ++i) {
+            ggml_backend_sched_set_tensor_backend(sched, nodes[i], backend.get());
         }
         require(ggml_backend_sched_alloc_graph(scheduler.get(), graph),
                 "Failed to allocate remote RPC graph and weights");
 
-        for (int i = 0; i < graph->n_nodes; ++i) {
-            const auto * node = graph->nodes[i];
-            require(ggml_backend_sched_get_tensor_backend(sched, graph->nodes[i]) == backend.get(),
-                    std::string("DSpine op silently left RPC0: ") + ggml_get_name(node));
+        for (int i = 0; i < n_nodes; ++i) {
+            require(ggml_backend_sched_get_tensor_backend(sched, nodes[i]) == backend.get(),
+                    std::string("DSpine op silently left RPC0: ") + ggml_get_name(nodes[i]));
         }
-        for (int i = 0; i < graph->n_leafs; ++i) {
-            const auto * node = graph->leafs[i];
-            require(ggml_backend_sched_get_tensor_backend(sched, graph->leafs[i]) == backend.get(),
-                    std::string("DSpine weight/input silently left RPC0: ") + ggml_get_name(node));
+        for (ggml_tensor * tensor : rpc_inputs) {
+            require(ggml_backend_sched_get_tensor_backend(sched, tensor) == backend.get(),
+                    std::string("DSpine weight/input silently left RPC0: ") + ggml_get_name(tensor));
         }
-        std::printf("RPC graph placement audited: %d nodes and %d leaves assigned to RPC0 (CPU standby only)\n",
-                    graph->n_nodes, graph->n_leafs);
+        std::printf("RPC graph placement audited: %d nodes and %zu inputs assigned to RPC0 (CPU standby only)\n",
+                    n_nodes, rpc_inputs.size());
 
         std::ifstream file(filename, std::ios::binary);
         require(file.good(), "Cannot open GGUF for weight streaming");
