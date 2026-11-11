@@ -276,12 +276,12 @@ def ensure_models(args):
     return {'target': target, 'mtp': draft}
 
 
-def run_server(a, case, outdir, metadata):
+def run_server(a, case, outdir, metadata, command_builder=None):
     port = a.port if a.port else free_port()
     logpath = outdir / (case.name() + '.server.log')
     gpupath = outdir / (case.name() + '.gpu.csv')
     args_path = outdir / (case.name() + '.command.json')
-    cmd = build_command(a, case.mode, case.n_ctx, case.depth, port)
+    cmd = (command_builder or build_command)(a, case.mode, case.n_ctx, case.depth, port)
     (args_path).write_text(json.dumps({'argv':cmd, 'shell_hint': subprocess.list2cmdline(cmd)}, indent=2))
     env = os.environ.copy()
     if a.trace:
